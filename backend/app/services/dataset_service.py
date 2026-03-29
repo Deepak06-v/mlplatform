@@ -1,27 +1,38 @@
 import pandas as pd
 from app.utils.db import db
+from app.services.eda_service import detect_column_types
 
 
 def process_and_store_dataset(file_id, file_path, filename):
-    # Load CSV
+    """Process uploaded CSV and store metadata with column type detection."""
     df = pd.read_csv(file_path)
 
-    data = df.to_dict(orient="records")
+    # Detect column types
+    numerical_cols, categorical_cols = detect_column_types(df)
 
+    # Format column types for frontend
+    column_types = []
+    for col in df.columns:
+        col_type = "numerical" if col in numerical_cols else "categorical"
+        column_types.append({
+            "column": str(col),
+            "type": col_type
+        })
+
+    # Store dataset metadata in database
     document = {
         "dataset_id": file_id,
         "filename": filename,
-        "data": data,  # 🔥 STORE FULL DATA
+        "file_path": file_path,
         "columns": list(df.columns),
         "rows": len(df),
     }
-
-    # Insert into Mongo
-    result = db.datasets.insert_one(document)
+    db.datasets.insert_one(document)
 
     return {
         "dataset_id": file_id,
         "rows": len(df),
         "columns": len(df.columns),
         "columns_list": list(df.columns),
+        "column_types": column_types,
     }
