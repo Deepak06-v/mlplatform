@@ -15,8 +15,8 @@ const App = () => {
     <Route path='/upload' element={<UploadDatasetPage />} />
     <Route path='/dashboard' element={<DashboardPage />} />
     <Route path='/insights/:dataset_id' element={<DataInsights />} />
-<Route path='/playground/:dataset_id' element={<MlPlayground />} />
-<Route path='/comparison/:dataset_id' element={<ModelComparison />} />
+    <Route path='/playground/:dataset_id' element={<MlPlayground />} />
+    <Route path='/comparison/:dataset_id' element={<ModelComparison />} />
     <Route path='/settings' element={<Settings/>} />
     <Route path='/new-experiment' element={ <h1>new-experiment  </h1> } />
     <Route path='/documentation' element={<h1>documentation</h1>} />

@@ -9,9 +9,9 @@ import {
 
 function MissingValuesChart({ data }) {
   return (
-    <div className="mt-8">
-      <h3 className="text-lg font-semibold mb-4">
-        Missing Values Analysis
+    <div>
+      <h3 className="text-xl font-bold text-gray-900 mb-6">
+        📋 Missing Values Analysis
       </h3>
 
       <ResponsiveContainer width="100%" height={300}>
@@ -19,7 +19,7 @@ function MissingValuesChart({ data }) {
           <XAxis dataKey="column" />
           <YAxis />
           <Tooltip />
-          <Bar dataKey="missing_percentage" />
+          <Bar dataKey="missing_percentage" fill="#3b82f6" />
         </BarChart>
       </ResponsiveContainer>
     </div>

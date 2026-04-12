@@ -1,28 +1,29 @@
 import { useEffect, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
+
 import ModelControls from "../components/MlPlayground/ModelControl";
 import MetricsCards from "../components/MlPlayground/MetricsCards";
+import ModelInsightsPanel from "../components/MlPlayground/ModelInsightsPanel";
+
 import { edaAPI } from "../../services/api";
 import { storageUtils } from "../utils/storageUtils";
 import { useAsync } from "../hooks/useAsync";
+import { generateModelInsights } from "../utils/modelInsights";
 
 function MlPlayground() {
   const { dataset_id } = useParams();
-  
+
   const [targetColumn, setTargetColumn] = useState("");
   const [problemType, setProblemType] = useState("");
   const [algorithm, setAlgorithm] = useState("");
+  const [modelInsights, setModelInsights] = useState([]);
   const [params, setParams] = useState({
     max_depth: 5,
     n_estimators: 100
   });
 
-  // Validate dataset_id exists
-  if (!dataset_id) {
-    return <div className="p-6 text-red-600">Error: No dataset selected</div>;
-  }
+  // ❗ Always keep hooks at top — no early return before this
 
-  // Use Async hook for training
   const trainAsync = useAsync(async () => {
     if (!targetColumn) {
       throw new Error("Please select a target column");
@@ -30,10 +31,13 @@ function MlPlayground() {
     if (!algorithm) {
       throw new Error("Please select an algorithm");
     }
+
     return edaAPI.trainModel(dataset_id, targetColumn, algorithm, params);
   });
 
-  // Initialize target column from storage
+  // =============================
+  // Load target column
+  // =============================
   useEffect(() => {
     const storedTarget = storageUtils.getTargetColumn(dataset_id);
     if (storedTarget) {
@@ -41,7 +45,9 @@ function MlPlayground() {
     }
   }, [dataset_id]);
 
-  // Auto-detect problem type based on target column type
+  // =============================
+  // Detect problem type
+  // =============================
   useEffect(() => {
     if (!targetColumn) {
       setProblemType("");
@@ -50,9 +56,10 @@ function MlPlayground() {
     }
 
     const columnTypes = storageUtils.getColumnTypes();
-    const targetColInfo = columnTypes.find(col => col.column === targetColumn);
-    
-    // Detect based on actual column type
+    const targetColInfo = columnTypes.find(
+      (col) => col.column === targetColumn
+    );
+
     const isRegression = targetColInfo?.type === "numerical";
 
     if (isRegression) {
@@ -64,13 +71,29 @@ function MlPlayground() {
     }
   }, [targetColumn]);
 
-  // Save target column to storage
-  const handleTargetChange = useCallback((column) => {
-    setTargetColumn(column);
-    storageUtils.setTargetColumn(dataset_id, column);
-  }, [dataset_id]);
+  // =============================
+  // Generate model insights (KEY FIX)
+  // =============================
+  useEffect(() => {
+    if (trainAsync.data?.data?.metrics && problemType) {
+      const metrics = trainAsync.data.data.metrics;
 
-  // Handle model training
+      const insights = generateModelInsights(metrics, problemType);
+      setModelInsights(insights);
+    }
+  }, [trainAsync.data, problemType]);
+
+  // =============================
+  // Handlers
+  // =============================
+  const handleTargetChange = useCallback(
+    (column) => {
+      setTargetColumn(column);
+      storageUtils.setTargetColumn(dataset_id, column);
+    },
+    [dataset_id]
+  );
+
   const handleTrain = useCallback(async () => {
     try {
       await trainAsync.execute();
@@ -79,29 +102,61 @@ function MlPlayground() {
     }
   }, [trainAsync]);
 
+  // =============================
+  // Data prep
+  // =============================
   const columnTypes = storageUtils.getColumnTypes();
-  const columnNames = columnTypes.map(col => col.column);
+  const columnNames = columnTypes.map((col) => col.column);
 
+  // =============================
+  // Early validation (AFTER hooks)
+  // =============================
+  if (!dataset_id) {
+    return (
+      <div className="p-6 text-red-600">
+        Error: No dataset selected
+      </div>
+    );
+  }
+
+  // =============================
+  // UI
+  // =============================
   return (
-    <div className="p-6 grid grid-cols-2 gap-6">
-      <ModelControls
-        columnNames={columnNames}
-        targetColumn={targetColumn}
-        onTargetChange={handleTargetChange}
-        problemType={problemType}
-        algorithm={algorithm}
-        setAlgorithm={setAlgorithm}
-        params={params}
-        setParams={setParams}
-        onTrain={handleTrain}
-        isTraining={trainAsync.isLoading}
-      />
+    <div className="p-6 bg-gray-50 min-h-screen">
+      <div className="max-w-7xl mx-auto grid grid-cols-2 gap-6">
 
-      <MetricsCards 
-        results={trainAsync.data} 
-        error={trainAsync.error}
-        isLoading={trainAsync.isLoading}
-      />
+        {/* LEFT SIDE */}
+        <div className="bg-white p-5 rounded-xl shadow-sm">
+          <ModelControls
+            columnNames={columnNames}
+            targetColumn={targetColumn}
+            onTargetChange={handleTargetChange}
+            problemType={problemType}
+            algorithm={algorithm}
+            setAlgorithm={setAlgorithm}
+            params={params}
+            setParams={setParams}
+            onTrain={handleTrain}
+            isTraining={trainAsync.isLoading}
+          />
+        </div>
+
+        {/* RIGHT SIDE */}
+        <div className="space-y-6">
+
+          <div className="bg-white p-5 rounded-xl shadow-sm">
+            <MetricsCards
+              results={trainAsync.data}
+              error={trainAsync.error}
+              isLoading={trainAsync.isLoading}
+            />
+          </div>
+
+          <ModelInsightsPanel insights={modelInsights} />
+
+        </div>
+      </div>
     </div>
   );
 }
