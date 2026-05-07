@@ -27,21 +27,23 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
 
     try {
       // Upload to backend
-      const response = await datasetAPI.upload(uploadedFile);
-      const result = response.data;
+      const result = await datasetAPI.upload(uploadedFile);
 
-      // Store from backend response
-      if (result?.dataset_id) {
-        setDatasetId(result.dataset_id);
-        storageUtils.setDatasetId(result.dataset_id);
+      // Store from backend response - data is wrapped by APIResponse
+      const datasetId = result?.data?.dataset_id;
+      const columnTypes = result?.data?.column_types;
+
+      if (datasetId) {
+        setDatasetId(datasetId);
+        storageUtils.setDatasetId(datasetId);
       }
 
-      if (result?.column_types) {
-        storageUtils.setColumnTypes(result.column_types);
+      if (columnTypes) {
+        storageUtils.setColumnTypes(columnTypes);
 
         // Convert to map format for easier lookup
         const map = {};
-        result.column_types.forEach((col) => {
+        columnTypes.forEach((col) => {
           map[col.column.trim().toLowerCase()] = col.type;
         });
         setColumnTypes(map);

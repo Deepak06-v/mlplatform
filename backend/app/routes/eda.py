@@ -22,6 +22,7 @@ from app.services.eda_service import (
     compute_feature_importance,
     train_model
 )
+from app.services.eda_service import compare_models
 
 router = APIRouter()
 
@@ -44,7 +45,13 @@ class TrainRequest(BaseModel):
     target_column: str = Field(..., description="Target column name")
     algorithm: str = Field(..., description="ML algorithm to use")
     params: dict = Field(default_factory=dict, description="Model hyperparameters")
+    preprocess_config: dict = Field(default_factory=dict, description="Preprocessing configuration")
 
+class CompareModelsRequest(BaseModel):
+    dataset_id: str = Field(..., description="Dataset identifier")
+    target_column: str = Field(..., description="Target column name")
+    problem_type: str = Field(..., description="classification or regression")
+    preprocess_config: dict = Field(default_factory=dict)
 
 # ===============================
 # ENDPOINTS
@@ -115,7 +122,8 @@ def train_model_api(request: TrainRequest):
             df,
             request.target_column,
             request.algorithm,
-            request.params
+            request.params,
+            request.preprocess_config
         )
         
         if "error" in result:
@@ -125,3 +133,30 @@ def train_model_api(request: TrainRequest):
     
     except Exception as e:
         APIResponse.server_error(f"Model training failed: {str(e)}", exception=e)
+
+@router.post("/compare-models", tags=["Model Comparison"])
+def compare_models_api(request: CompareModelsRequest):
+    """
+    Compare multiple ML models using cross-validation.
+    """
+    try:
+        validate_dataset_id(request.dataset_id)
+        validate_target_column(request.target_column)
+
+        df = load_dataset_df(request.dataset_id)
+        validate_target_column_in_dataset(df, request.target_column)
+
+        result = compare_models(
+            df,
+            request.target_column,
+            request.problem_type,
+            request.preprocess_config
+        )
+
+        return APIResponse.success(clean_json(result))
+
+    except Exception as e:
+        APIResponse.server_error(
+            f"Model comparison failed: {str(e)}",
+            exception=e
+        )

@@ -44,40 +44,42 @@ export const datasetAPI = {
  * EDA (Exploratory Data Analysis) APIs
  */
 export const edaAPI = {
-  /**
-   * Get comprehensive analysis of dataset
-   * @param {string} datasetId - Dataset identifier
-   * @returns {Promise} Analysis results
-   */
   analyze: (datasetId) =>
     api.post("/eda/analyze", { dataset_id: datasetId }),
 
-  /**
-   * Compute feature importance for target column
-   * @param {string} datasetId - Dataset identifier
-   * @param {string} targetColumn - Target column name
-   * @returns {Promise} Feature importance rankings
-   */
   computeFeatureImportance: (datasetId, targetColumn) =>
     api.post("/eda/feature-importance", {
       dataset_id: datasetId,
       target_column: targetColumn
     }),
 
-  /**
-   * Train ML model
-   * @param {string} datasetId - Dataset identifier
-   * @param {string} targetColumn - Target column name
-   * @param {string} algorithm - Algorithm name
-   * @param {object} params - Model hyperparameters
-   * @returns {Promise} Training metrics
-   */
-  trainModel: (datasetId, targetColumn, algorithm, params = {}) =>
+  trainModel: (
+    datasetId,
+    targetColumn,
+    algorithm,
+    params = {},
+    preprocessConfig = {}
+  ) =>
     api.post("/eda/train-model", {
       dataset_id: datasetId,
       target_column: targetColumn,
       algorithm,
-      params
+      params,
+      preprocess_config: preprocessConfig
+    }),
+
+  // ✅ CORRECTLY INSIDE OBJECT
+  compareModels: (
+    datasetId,
+    targetColumn,
+    problemType,
+    preprocessConfig = {}
+  ) =>
+    api.post("/eda/compare-models", {
+      dataset_id: datasetId,
+      target_column: targetColumn,
+      problem_type: problemType,
+      preprocess_config: preprocessConfig
     })
 };
 

@@ -47,6 +47,11 @@ function UploadPage() {
     if (savedDatasetId) {
       setDatasetId(savedDatasetId);
     }
+
+    const savedTarget = storageUtils.getTargetColumn();
+    if (savedTarget) {
+      setTarget(savedTarget);
+    }
   }, []);
 
   // Persist file and data preview when they change
@@ -58,6 +63,13 @@ function UploadPage() {
       storageUtils.setPreviewData(data.slice(0, 20));
     }
   }, [file, data]);
+
+  // Persist target selection
+  useEffect(() => {
+    if (target && datasetId) {
+      storageUtils.setTargetColumn(datasetId, target);
+    }
+  }, [target, datasetId]);
 
   // Handlers
   const handleReset = useCallback(() => {
@@ -122,14 +134,18 @@ function UploadPage() {
       <ColumnAnalysisTable columns={columnAnalysis} columnTypes={columnTypes} />
 
       <div className="mt-6 flex gap-4">
-        {datasetId && target && (
-          <button
-            onClick={handleProceed}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-          >
-            Proceed to Data Insights →
-          </button>
-        )}
+        <button
+          onClick={handleProceed}
+          disabled={!datasetId || !target}
+          className={`px-4 py-2 rounded-lg transition ${
+            datasetId && target
+              ? "bg-blue-600 text-white hover:bg-blue-700 cursor-pointer"
+              : "bg-gray-300 text-gray-500 cursor-not-allowed"
+          }`}
+          title={!datasetId ? "Upload a dataset first" : !target ? "Select a target column" : ""}
+        >
+          Proceed to Data Insights →
+        </button>
 
         <button
           onClick={handleReset}

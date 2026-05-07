@@ -10,8 +10,10 @@ import {
   BookOpen,
   HelpCircle,
   Plus,
+  BrushCleaning
 } from "lucide-react";
 import Logo from "../../assets/Logo";
+import { storageUtils } from "../../utils/storageUtils"; // ← Now used by handleNav
 
 // ─── NAV ITEMS ────────────────────────────────────────────────────────────────
 // To change a route, edit the `path` field below.
@@ -35,6 +37,12 @@ const NAV_ITEMS = [
     label: "Data Insights",
     icon: BarChart2,
     path: "/insights",       // ← EDIT: your route here
+  },
+  {
+    id: "preprocess",
+    label: "PreProcessing",
+    icon: BrushCleaning,
+    path: "/preprocess",            // ← EDIT: your route here
   },
   {
     id: "playground",
@@ -84,26 +92,29 @@ export default function Sidebar() {
   const navigate = useNavigate();
 
   const handleNav = (item) => {
-    if (item.external) {
-      window.open(item.path, "_blank", "noopener,noreferrer");
-    } else {
-      const datasetId = localStorage.getItem("dataset_id");
-
-if (
-  ["insights", "playground", "comparison"].includes(item.id)
-) {
-  if (!datasetId) {
-    alert("Please upload a dataset first");
-    navigate("/upload");
+  if (item.external) {
+    window.open(item.path, "_blank", "noopener,noreferrer");
     return;
   }
 
-  navigate(`${item.path}/${datasetId}`);
-} else {
-  navigate(item.path);
-}
+  const datasetId = storageUtils.getDatasetId();
+
+  // Routes that REQUIRE dataset_id
+  const datasetRoutes = ["insights", "playground", "comparison", "preprocess"];
+
+  if (datasetRoutes.includes(item.id)) {
+    if (!datasetId) {
+      alert("Please upload a dataset first");
+      navigate("/upload");
+      return;
     }
-  };
+
+    const fullPath = `${item.path}/${datasetId}`;
+    navigate(fullPath);
+  } else {
+    navigate(item.path);
+  }
+};
 
   return (
     <aside className="fixed top-0 left-0 w-[220px] h-screen bg-[#eef2fc] border-r border-[#dde4f5] flex flex-col px-3 py-5">

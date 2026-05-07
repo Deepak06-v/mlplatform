@@ -1,5 +1,9 @@
 // src/pages/DashboardPage.jsx
 import React from "react";
 export default function DashboardPage() {
-  return <h1>Dashboard</h1>;
+  return (
+    <div>
+      <h1>Implement the DashboardPage here.</h1>      
+    </div>
+  )
 }

@@ -22,8 +22,13 @@ function MlPlayground() {
     n_estimators: 100
   });
 
-  // ❗ Always keep hooks at top — no early return before this
+  // ✅ GET CONFIG FROM STORAGE
+  const mlConfig = storageUtils.getMLConfig(dataset_id);
+  const preprocessConfig = mlConfig?.preprocess_config || {};
 
+  // =============================
+  // Training API
+  // =============================
   const trainAsync = useAsync(async () => {
     if (!targetColumn) {
       throw new Error("Please select a target column");
@@ -32,21 +37,27 @@ function MlPlayground() {
       throw new Error("Please select an algorithm");
     }
 
-    return edaAPI.trainModel(dataset_id, targetColumn, algorithm, params);
+    return edaAPI.trainModel(
+      dataset_id,
+      targetColumn,
+      algorithm,
+      params,
+      preprocessConfig
+    );
   });
 
   // =============================
   // Load target column
   // =============================
   useEffect(() => {
-    const storedTarget = storageUtils.getTargetColumn(dataset_id);
+    const storedTarget = mlConfig?.target_column;
     if (storedTarget) {
       setTargetColumn(storedTarget);
     }
   }, [dataset_id]);
 
   // =============================
-  // Detect problem type
+  // Detect problem type (FIXED ✅)
   // =============================
   useEffect(() => {
     if (!targetColumn) {
@@ -62,22 +73,36 @@ function MlPlayground() {
 
     const isRegression = targetColInfo?.type === "numerical";
 
+    let newProblemType = "";
+    let newAlgorithm = "";
+
     if (isRegression) {
-      setProblemType("regression");
-      setAlgorithm("linear");
+      newProblemType = "regression";
+      newAlgorithm = "linear";
     } else {
-      setProblemType("classification");
-      setAlgorithm("rf");
+      newProblemType = "classification";
+      newAlgorithm = "rf";
     }
+
+    setProblemType(newProblemType);
+    setAlgorithm(newAlgorithm);
+
+    // ✅ Save to localStorage
+    const updatedConfig = {
+      ...mlConfig,
+      problem_type: newProblemType
+    };
+
+    storageUtils.setMLConfig(dataset_id, updatedConfig);
+
   }, [targetColumn]);
 
   // =============================
-  // Generate model insights (KEY FIX)
+  // Generate model insights
   // =============================
   useEffect(() => {
     if (trainAsync.data?.data?.metrics && problemType) {
       const metrics = trainAsync.data.data.metrics;
-
       const insights = generateModelInsights(metrics, problemType);
       setModelInsights(insights);
     }
@@ -89,9 +114,15 @@ function MlPlayground() {
   const handleTargetChange = useCallback(
     (column) => {
       setTargetColumn(column);
-      storageUtils.setTargetColumn(dataset_id, column);
+
+      const updatedConfig = {
+        ...mlConfig,
+        target_column: column
+      };
+
+      storageUtils.setMLConfig(dataset_id, updatedConfig);
     },
-    [dataset_id]
+    [dataset_id, mlConfig]
   );
 
   const handleTrain = useCallback(async () => {
@@ -109,7 +140,7 @@ function MlPlayground() {
   const columnNames = columnTypes.map((col) => col.column);
 
   // =============================
-  // Early validation (AFTER hooks)
+  // Validation
   // =============================
   if (!dataset_id) {
     return (

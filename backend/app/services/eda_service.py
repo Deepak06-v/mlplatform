@@ -8,6 +8,15 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, r2_score, mean_squared_error
 from sklearn.linear_model import LogisticRegression, LinearRegression
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from imblearn.over_sampling import SMOTE
+from imblearn.pipeline import Pipeline as ImbPipeline
+from sklearn.preprocessing import FunctionTransformer
+import numpy as np
+
 # ===============================
 # 🔥 LOAD DATASET (CACHED)
 # ===============================
@@ -344,7 +353,101 @@ def preprocess_data(df, target_column, exclude_high_cardinality=True):
     
     return X, y, encoders
 
-def train_model(df, target_column, algorithm, params):
+from sklearn.preprocessing import FunctionTransformer
+import numpy as np
+
+def build_preprocessing_pipeline(
+    df,
+    target_column,
+    algorithm,
+    num_impute="median",
+    cat_impute="most_frequent",
+    scaling="standard",
+    preprocess_config=None
+):
+    """
+    Build preprocessing pipeline using ColumnTransformer (with feature transformation).
+    """
+
+    df = df.copy()
+
+    # -------------------------
+    # Remove rows with null target
+    # -------------------------
+    df = df.dropna(subset=[target_column])
+
+    if len(df) < 2:
+        raise ValueError("Dataset too small after removing null targets")
+
+    # -------------------------
+    # Read config safely
+    # -------------------------
+    if preprocess_config is None:
+        preprocess_config = {}
+
+    num_transform = preprocess_config.get("num_transform", "none")
+
+    # -------------------------
+    # Detect column types
+    # -------------------------
+    numerical_cols, categorical_cols, high_cardinality_cols = detect_column_types(df)
+
+    # -------------------------
+    # Remove high-cardinality + target
+    # -------------------------
+    feature_cols = [
+        col for col in df.columns
+        if col != target_column and col not in high_cardinality_cols
+    ]
+
+    if not feature_cols:
+        raise ValueError("No valid features available after filtering")
+
+    X = df[feature_cols].copy()
+    y = df[target_column].copy()
+
+    # -------------------------
+    # Ensure column lists match X
+    # -------------------------
+    numerical_cols = [col for col in numerical_cols if col in X.columns]
+    categorical_cols = [col for col in categorical_cols if col in X.columns]
+
+    # -------------------------
+    # Encode target if needed
+    # -------------------------
+    if not pd.api.types.is_numeric_dtype(y):
+        y = LabelEncoder().fit_transform(y.astype(str))
+
+    # -------------------------
+    # Numerical Pipeline
+    # -------------------------
+    use_scaling = preprocess_config.get("scaling", "standard") == "standard"
+
+    num_pipeline = Pipeline([
+        ("imputer", SimpleImputer(strategy=num_impute)),
+        ("transform", FunctionTransformer(np.log1p) if num_transform == "log" else "passthrough"),
+        ("scaler", StandardScaler() if (use_scaling and scaling == "standard") else "passthrough")
+    ])
+
+    # -------------------------
+    # Categorical Pipeline
+    # -------------------------
+    cat_pipeline = Pipeline([
+        ("imputer", SimpleImputer(strategy=cat_impute)),
+        ("encoder", OneHotEncoder(handle_unknown="ignore"))
+    ])
+
+    # -------------------------
+    # Combine pipelines
+    # -------------------------
+    preprocessor = ColumnTransformer([
+        ("num", num_pipeline, numerical_cols),
+        ("cat", cat_pipeline, categorical_cols)
+    ])
+
+    return X, y, preprocessor
+
+def train_model(df, target_column, algorithm, params, preprocess_config=None):
     """
     Train ML model with specified algorithm and parameters.
     
@@ -357,14 +460,37 @@ def train_model(df, target_column, algorithm, params):
     Returns:
         Dict with metrics for trained model
     """
+
+    if preprocess_config is None:
+        preprocess_config = {}
+
+    num_impute = preprocess_config.get("num_impute", "median")
+    cat_impute = preprocess_config.get("cat_impute", "most_frequent")
+    scaling = preprocess_config.get("scaling", "standard")
+    imbalance = preprocess_config.get("imbalance", "none")
+    target_transform = preprocess_config.get("target_transform", "none")
+
     try:
-        X, y, encoders = preprocess_data(df, target_column, exclude_high_cardinality=True)
-    except ValueError as e:
+        X, y, preprocessor = build_preprocessing_pipeline(
+        df,
+        target_column,
+        algorithm,
+        num_impute,
+        cat_impute,
+        scaling,
+        preprocess_config
+    )
+    except Exception as e:
         return {"error": str(e)}
     
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )
+    import numpy as np
+
+    if target_transform == "log":
+        y_train = np.log1p(y_train)
+        y_test = np.log1p(y_test)
     
     # Model selection based on algorithm
     try:
@@ -372,8 +498,26 @@ def train_model(df, target_column, algorithm, params):
     except ValueError as e:
         return {"error": str(e)}
     
-    model.fit(X_train, y_train)
-    preds = model.predict(X_test)
+    if imbalance == "smote" and algorithm in ["linear", "tree_reg", "rf_reg"]:
+        imbalance = "none"
+
+    if imbalance == "smote":
+        pipeline = ImbPipeline([
+            ("preprocessor", preprocessor),
+            ("smote", SMOTE()),
+            ("model", model)
+            ])
+    else:
+        pipeline = Pipeline([
+            ("preprocessor", preprocessor),
+            ("model", model)
+            ])
+
+    pipeline.fit(X_train, y_train)
+    preds = pipeline.predict(X_test)
+    if target_transform == "log":
+        preds = np.expm1(preds)
+        y_test = np.expm1(y_test)
     
     # Determine if classification or regression
     is_classification = len(set(y)) <= 10
@@ -387,9 +531,11 @@ def train_model(df, target_column, algorithm, params):
             "f1": round(float(f1_score(y_test, preds, zero_division=0)), 4),
         }
     else:
+        mse = mean_squared_error(y_test, preds)
+        rmse = np.sqrt(mse)
         metrics = {
             "r2": round(float(r2_score(y_test, preds)), 4),
-            "rmse": round(float(mean_squared_error(y_test, preds, squared=False)), 4)
+            "rmse": round(float(np.sqrt(mean_squared_error(y_test, preds))), 4)
         }
     
     return {"metrics": metrics}
@@ -398,32 +544,250 @@ def train_model(df, target_column, algorithm, params):
 def _create_model(algorithm, params):
     """
     Factory function to create model instance.
-    
-    Args:
-        algorithm: Algorithm name
-        params: Hyperparameters dict
-        
-    Returns:
-        Sklearn model instance
     """
+
     models_map = {
-        "logistic": lambda p: LogisticRegression(max_iter=1000),
-        "tree": lambda p: DecisionTreeClassifier(max_depth=p.get("max_depth", 5)),
+        # -------------------------
+        # Classification
+        # -------------------------
+        "logistic": lambda p: LogisticRegression(
+            max_iter=1000,
+            class_weight=p.get("class_weight", None)
+        ),
+
+        "tree": lambda p: DecisionTreeClassifier(
+            max_depth=p.get("max_depth", 5),
+            class_weight=p.get("class_weight", None)
+        ),
+
         "rf": lambda p: RandomForestClassifier(
             n_estimators=p.get("n_estimators", 100),
             max_depth=p.get("max_depth", None),
+            class_weight=p.get("class_weight", None),
             random_state=42
         ),
+
+        # -------------------------
+        # Regression (no class_weight)
+        # -------------------------
         "linear": lambda p: LinearRegression(),
-        "tree_reg": lambda p: DecisionTreeRegressor(max_depth=p.get("max_depth", 5)),
+
+        "tree_reg": lambda p: DecisionTreeRegressor(
+            max_depth=p.get("max_depth", 5)
+        ),
+
         "rf_reg": lambda p: RandomForestRegressor(
             n_estimators=p.get("n_estimators", 100),
             max_depth=p.get("max_depth", None),
             random_state=42
         )
     }
-    
+
     if algorithm not in models_map:
         raise ValueError(f"Invalid algorithm: {algorithm}")
-    
+
     return models_map[algorithm](params)
+
+from sklearn.model_selection import cross_val_score
+from sklearn.pipeline import Pipeline
+from sklearn.linear_model import LogisticRegression, LinearRegression
+from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
+
+
+def get_model_configs(problem_type):
+    if problem_type == "classification":
+        return {
+            "LogisticRegression": [
+                LogisticRegression(max_iter=1000),
+                LogisticRegression(C=0.5, max_iter=1000)
+            ],
+            "RandomForest": [
+                RandomForestClassifier(n_estimators=100, random_state=42),
+                RandomForestClassifier(n_estimators=200, max_depth=10, random_state=42)
+            ],
+            "DecisionTree": [
+                DecisionTreeClassifier(max_depth=5),
+                DecisionTreeClassifier(max_depth=10)
+            ]
+        }
+    else:
+        return {
+            "LinearRegression": [
+                LinearRegression()
+            ],
+            "RandomForest": [
+                RandomForestRegressor(n_estimators=100, random_state=42),
+                RandomForestRegressor(n_estimators=200, max_depth=10, random_state=42)
+            ],
+            "DecisionTree": [
+                DecisionTreeRegressor(max_depth=5),
+                DecisionTreeRegressor(max_depth=10)
+            ]
+        }
+
+
+def compare_models(df, target_column, problem_type, preprocess_config=None):
+    if preprocess_config is None:
+        preprocess_config = {}
+
+    # -------------------------
+    # Preprocessing
+    # -------------------------
+    X, y, preprocessor = build_preprocessing_pipeline(
+        df,
+        target_column,
+        algorithm="rf",
+        preprocess_config=preprocess_config
+    )
+
+    # -------------------------
+    # Get models
+    # -------------------------
+    model_configs = get_model_configs(problem_type)
+
+    scoring = "f1_weighted" if problem_type == "classification" else "r2"
+
+    results = []
+
+    # -------------------------
+    # Model loop (FIXED)
+    # -------------------------
+    for name, model_list in model_configs.items():
+        best_score = -1
+        best_std = 0
+        best_params = {}
+
+        for model in model_list:
+            pipeline = Pipeline([
+                ("preprocessor", preprocessor),
+                ("model", model)
+            ])
+
+            scores = cross_val_score(
+                pipeline,
+                X,
+                y,
+                cv=5,
+                scoring=scoring
+            )
+
+            mean_score = scores.mean()
+
+            if mean_score > best_score:
+                best_score = mean_score
+                best_std = scores.std()
+                best_params = model.get_params()
+
+        results.append({
+            "model": name,
+            "score": round(float(best_score), 4),
+            "std": round(float(best_std), 4),
+            "params": best_params
+        })
+
+    # -------------------------
+    # Sort
+    # -------------------------
+    results = sorted(results, key=lambda x: x["score"], reverse=True)
+
+    insights = generate_insights(results, problem_type, preprocess_config)
+
+    recommendation = generate_recommendation(results, problem_type)
+
+    return {
+        "leaderboard": results,
+        "best_model": results[0]["model"],
+        "insights": insights,
+        "recommendation": recommendation
+    }
+def generate_insights(results, problem_type, preprocess_config):
+    insights = []
+
+    # -------------------------
+    # Sort results
+    # -------------------------
+    results_sorted = sorted(results, key=lambda x: x["score"], reverse=True)
+
+    best = results_sorted[0]
+    worst = results_sorted[-1]
+
+    # -------------------------
+    # Performance gap insight
+    # -------------------------
+    gap = best["score"] - worst["score"]
+
+    if gap > 0.1:
+        insights.append("Large performance gap detected → model choice is critical")
+    elif gap < 0.02:
+        insights.append("All models perform similarly → dataset may be simple or small")
+
+    # -------------------------
+    # Tree vs Linear insight
+    # -------------------------
+    tree_models = ["RandomForest", "DecisionTree"]
+    linear_models = ["LogisticRegression", "LinearRegression"]
+
+    best_model = best["model"]
+
+    if best_model in tree_models:
+        insights.append("Tree-based models performed best → data likely non-linear")
+    elif best_model in linear_models:
+        insights.append("Linear model performed well → relationships may be simple")
+
+    # -------------------------
+    # Stability insight
+    # -------------------------
+    if best["std"] > 0.05:
+        insights.append("Model performance unstable → dataset may be noisy")
+
+    # -------------------------
+    # Preprocessing insights
+    # -------------------------
+    if preprocess_config.get("num_transform") == "log":
+        insights.append("Log transformation applied → helpful for skewed features")
+
+    if preprocess_config.get("scaling") == "standard":
+        insights.append("Feature scaling enabled → important for linear models")
+
+    if preprocess_config.get("imbalance") == "smote":
+        insights.append("SMOTE applied → handling class imbalance")
+
+    return insights
+
+def generate_recommendation(results, problem_type):
+    results_sorted = sorted(results, key=lambda x: x["score"], reverse=True)
+
+    best = results_sorted[0]
+    second = results_sorted[1] if len(results_sorted) > 1 else None
+
+    best_model = best["model"]
+    gap = best["score"] - (second["score"] if second else 0)
+
+    # -------------------------
+    # Confidence level
+    # -------------------------
+    if gap > 0.1:
+        confidence = "high"
+    elif gap > 0.03:
+        confidence = "medium"
+    else:
+        confidence = "low"
+
+    # -------------------------
+    # Reason logic
+    # -------------------------
+    if best_model in ["RandomForest", "DecisionTree"]:
+        reason = "Tree-based models performed best → data likely non-linear"
+
+    elif best_model in ["LogisticRegression", "LinearRegression"]:
+        reason = "Linear model performed well → relationships appear simple"
+
+    else:
+        reason = "Model achieved best cross-validation performance"
+
+    return {
+        "model": best_model,
+        "reason": reason,
+        "confidence": confidence
+    }
