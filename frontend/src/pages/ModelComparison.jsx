@@ -1,10 +1,7 @@
 import { useEffect, useState } from "react";
 import { storageUtils } from "../utils/storageUtils";
 import { edaAPI } from "../../services/api";
-
-import Leaderboard from "../components/ModelComparison/Leaderboard";
-import InsightsPanel from "../components/ModelComparison/InsightsPanel";
-import TopModelCard from "../components/ModelComparison/TopModelCard";
+import ModelComparisonDashboard from "../components/ModelComparison/ModelComparisonDashboard";
 
 function ModelComparison() {
   const datasetId = storageUtils.getDatasetId();
@@ -12,10 +9,12 @@ function ModelComparison() {
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState(null);
 
   const fetchComparison = async () => {
     try {
       setLoading(true);
+      setError(null);
 
       const response = await edaAPI.compareModels(
         datasetId,
@@ -27,56 +26,61 @@ function ModelComparison() {
       setData(response.data);
     } catch (err) {
       console.error("Comparison failed:", err);
+      setError(err.message || "Failed to compare models");
     } finally {
       setLoading(false);
     }
   };
 
   useEffect(() => {
+    if (!datasetId) return;
     fetchComparison();
-  }, []);
+  }, [datasetId]);
 
   if (!datasetId) {
-    return <div className="p-6 text-red-600">No dataset selected</div>;
+    return (
+      <div className="p-6 bg-red-50 border border-red-200 rounded-xl text-red-800 text-center">
+        <p className="font-semibold">No dataset selected</p>
+        <p className="text-sm mt-1">Please upload and select a dataset first.</p>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 bg-red-50 border border-red-200 rounded-xl">
+        <p className="text-red-800 font-semibold">Error: {error}</p>
+        <button
+          onClick={fetchComparison}
+          className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+        >
+          Try Again
+        </button>
+      </div>
+    );
   }
 
   return (
-    <div className="p-6 bg-gray-50 min-h-screen">
-      <div className="max-w-7xl mx-auto space-y-6">
-
-        <h1 className="text-2xl font-bold">Model Comparison</h1>
-
-        {loading && <div>Loading...</div>}
-
+    <div className="p-6 bg-gradient-to-br from-gray-50 via-blue-50 to-indigo-50 min-h-screen">
+      <div className="max-w-7xl mx-auto">
         {data && (
-  <div className="space-y-6">
+          <ModelComparisonDashboard
+            leaderboard={data.leaderboard}
+            bestModel={data.best_model}
+            recommendation={data.recommendation}
+            problemType={mlConfig.problem_type}
+            loading={loading}
+          />
+        )}
 
-    {/* TOP MODEL */}
-    <TopModelCard 
-  bestModel={data.best_model} 
-  leaderboard={data.leaderboard}
-  recommendation={data.recommendation}
-/>
-
-    <div className="grid grid-cols-3 gap-6">
-
-      {/* Leaderboard */}
-      <div className="col-span-2 bg-white p-5 rounded-xl shadow-sm">
-        <Leaderboard 
-          leaderboard={data.leaderboard} 
-          best={data.best_model} 
-        />
-      </div>
-
-      {/* Insights */}
-      <div className="bg-white p-5 rounded-xl shadow-sm">
-        <InsightsPanel insights={data.insights} />
-      </div>
-
-    </div>
-
-  </div>
-)}
+        {loading && !data && (
+          <div className="flex items-center justify-center min-h-screen">
+            <div className="text-center">
+              <div className="w-12 h-12 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-4" />
+              <p className="text-gray-600 font-semibold">Comparing models with cross-validation...</p>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
