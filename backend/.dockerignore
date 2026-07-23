@@ -1,8 +1,35 @@
-__pycache__
-*.pyc
+# Python
+__pycache__/
+*.py[cod]
 *.pyo
+
+# Virtual environment
+myenv/
+.venv/
+venv/
+
+# Environment files
 .env
-myenv
+.env.*
+
+# Git
 .git
 .gitignore
+
+# IDE
+.vscode/
+.idea/
+
+# Logs
+*.log
+
+# Tests
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Uploads (don't bake runtime data into the image)
+uploads/
+
+# Documentation
 *.md
