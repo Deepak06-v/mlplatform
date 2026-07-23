@@ -29,7 +29,8 @@ def patch_session(dataset_id: str, updates: dict) -> dict:
     updates["updated_at"] = datetime.utcnow()
     dataset_sessions_collection.update_one(
         {"dataset_id": dataset_id},
-        {"$set": updates}
+        {"$set": updates},
+        upsert=True
     )
     return get_session(dataset_id)
 

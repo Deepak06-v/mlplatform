@@ -4,6 +4,16 @@ const NotificationContext = createContext(null);
 
 let nextId = 0;
 
+function getNotifPrefs() {
+  try {
+    const raw = localStorage.getItem("ui_prefs");
+    if (!raw) return {};
+    return JSON.parse(raw).notifications || {};
+  } catch {
+    return {};
+  }
+}
+
 export function NotificationProvider({ children }) {
   const [notifications, setNotifications] = useState([]);
 
@@ -12,6 +22,9 @@ export function NotificationProvider({ children }) {
   }, []);
 
   const add = useCallback((type, title, message, duration = 4000) => {
+    const prefs = getNotifPrefs();
+    if (prefs[type] === false) return -1;
+
     const id = ++nextId;
 
     setNotifications((prev) => {

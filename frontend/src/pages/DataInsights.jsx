@@ -23,19 +23,22 @@ import { storageUtils } from "../utils/storageUtils";
 import { useAsync } from "../hooks/useAsync";
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
+import { useSession } from "../contexts/SessionContext";
 
 function DataInsights() {
   const { dataset_id } = useParams();
   const { notify } = useNotification();
+  const { session: globalSession, updateSession } = useSession();
   const [insights, setInsights] = useState([]);
   const [edaData, setEdaData] = useState(null);
-  const [targetColumn, setTargetColumn] = useState("");
   const [recommendations, setRecommendations] = useState([]);
   const [targetInfo, setTargetInfo] = useState(null);
   const [modelRecs, setModelRecs] = useState([]);
   const [aiEnabled, setAiEnabled] = useState(false);
   const edaFromCache = useRef(false);
   const fiFromCache = useRef(false);
+
+  const targetColumn = globalSession?.target_column || "";
 
   // Fetch EDA data
   const edaAsync = useAsync(() => edaAPI.analyze(dataset_id));
@@ -45,7 +48,7 @@ function DataInsights() {
     targetColumn ? edaAPI.computeFeatureImportance(dataset_id, targetColumn) : Promise.resolve([])
   );
 
-  // Load EDA: cache-first — use cached data if available, otherwise fetch
+  // Load EDA: cache-first
   useEffect(() => {
     if (!dataset_id) return;
 
@@ -59,7 +62,7 @@ function DataInsights() {
     edaAsync.execute();
   }, [dataset_id]);
 
-  // Persist EDA to cache after successful fetch (skip if restored from cache)
+  // Persist EDA to cache after successful fetch
   useEffect(() => {
     if (edaFromCache.current) {
       edaFromCache.current = false;
@@ -67,22 +70,16 @@ function DataInsights() {
     }
     if (edaAsync.isSuccess && edaAsync.data && dataset_id) {
       storageUtils.saveEDA(dataset_id, edaAsync.data);
-      storageUtils.addActivity(dataset_id, {
-        type: "eda",
-        title: "EDA completed",
-        description: "Dataset analysis ready"
-      });
-      notify.success("EDA completed", "Dataset analysis ready");
+      if (!edaAsync.data.from_cache) {
+        storageUtils.addActivity(dataset_id, {
+          type: "eda",
+          title: "EDA completed",
+          description: "Dataset analysis ready"
+        });
+        notify.success("EDA completed", "Dataset analysis ready");
+      }
     }
   }, [edaAsync.isSuccess, edaAsync.data, dataset_id]);
-
-  // Load target column from storage
-  useEffect(() => {
-    const storedTarget = storageUtils.getTargetColumn(dataset_id);
-    if (storedTarget) {
-      setTargetColumn(storedTarget);
-    }
-  }, [dataset_id]);
 
   // Auto-compute feature importance when target column changes: cache-first
   useEffect(() => {
@@ -106,12 +103,14 @@ function DataInsights() {
     }
     if (fiAsync.isSuccess && fiAsync.data && dataset_id && targetColumn) {
       storageUtils.saveFeatureImportance(dataset_id, targetColumn, fiAsync.data);
-      storageUtils.addActivity(dataset_id, {
-        type: "feature_importance",
-        title: "Feature importance computed",
-        description: `Target: ${targetColumn}`
-      });
-      notify.success("Feature importance computed", "Ready for analysis");
+      if (!fiAsync.data.from_cache) {
+        storageUtils.addActivity(dataset_id, {
+          type: "feature_importance",
+          title: "Feature importance computed",
+          description: `Target: ${targetColumn}`
+        });
+        notify.success("Feature importance computed", "Ready for analysis");
+      }
     }
   }, [fiAsync.isSuccess, fiAsync.data, dataset_id, targetColumn]);
   
@@ -148,7 +147,7 @@ useEffect(() => {
   // AI settings: read from session
   useEffect(() => {
     if (dataset_id) {
-      const settings = storageUtils.getAiSettings(dataset_id);
+      const settings = storageUtils.getAiSettings();
       setAiEnabled(settings.mode === "ai");
     }
   }, [dataset_id]);
@@ -166,9 +165,8 @@ useEffect(() => {
 
   // Handle target column change
   const handleTargetChange = useCallback((column) => {
-    setTargetColumn(column);
-    storageUtils.setTargetColumn(dataset_id, column);
-  }, [dataset_id]);
+    updateSession({ target_column: column });
+  }, [updateSession]);
 
   // Loading states
   if (edaAsync.isLoading) {

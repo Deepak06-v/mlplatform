@@ -4,6 +4,14 @@ from app.utils.dataset_helpers import (
     load_dataset_df,
     validate_target_column_in_dataset
 )
+from app.utils.eda_helpers import (
+    get_eda as get_cached_eda,
+    save_eda as save_cached_eda
+)
+from app.utils.feature_importance_helpers import (
+    get_feature_importance as get_cached_fi,
+    save_feature_importance as save_cached_fi
+)
 from app.utils.validators import (
     validate_dataset_id,
     validate_target_column,
@@ -61,11 +69,17 @@ class CompareModelsRequest(BaseModel):
 def analyze_data(request: EDARequest):
     """
     Comprehensive dataset analysis including statistics, distributions, and correlations.
+    Returns cached result from MongoDB if available; computes and caches on first request.
     """
     try:
         validate_dataset_id(request.dataset_id)
+
+        cached = get_cached_eda(request.dataset_id)
+        if cached:
+            return APIResponse.success(cached["data"], from_cache=True)
+
         df = load_dataset_df(request.dataset_id)
-        
+
         response = {
             "overview": compute_overview(df),
             "missing": compute_missing_by_column(df),
@@ -74,9 +88,12 @@ def analyze_data(request: EDARequest):
             "column_types": get_column_types(df),
             "correlation": compute_correlation_matrix(df)
         }
-        
-        return APIResponse.success(clean_json(response))
-    
+
+        cleaned = clean_json(response)
+        save_cached_eda(request.dataset_id, cleaned)
+
+        return APIResponse.success(cleaned)
+
     except Exception as e:
         APIResponse.server_error(f"Analysis failed: {str(e)}", exception=e)
 
@@ -85,21 +102,37 @@ def analyze_data(request: EDARequest):
 def feature_importance(request: FeatureImportanceRequest):
     """
     Compute feature importance using Random Forest.
+    Caching strategy: MongoDB -> compute -> store.
     """
     try:
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
-        
+
         df = load_dataset_df(request.dataset_id)
         validate_target_column_in_dataset(df, request.target_column)
-        
+
+        # Quick problem type detection for cache key (avoids full computation on cache hit)
+        y_unique = df[request.target_column].nunique() or 0
+        if y_unique <= 10:
+            problem_type = "classification"
+            model_used = "RandomForestClassifier"
+        else:
+            problem_type = "regression"
+            model_used = "RandomForestRegressor"
+
+        cached = get_cached_fi(request.dataset_id, request.target_column, problem_type, model_used)
+        if cached:
+            return APIResponse.success(cached["importance"], from_cache=True)
+
         result = compute_feature_importance(df, request.target_column)
-        
+
         if "error" in result:
             APIResponse.validation_error(result["error"])
-        
-        return APIResponse.success(clean_json(result))
-    
+
+        save_cached_fi(request.dataset_id, request.target_column, problem_type, model_used, result["importance"])
+
+        return APIResponse.success(clean_json(result["importance"]))
+
     except Exception as e:
         APIResponse.server_error(f"Feature importance computation failed: {str(e)}", exception=e)
 

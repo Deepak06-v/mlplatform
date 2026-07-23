@@ -11,17 +11,20 @@ import { useAsync } from "../hooks/useAsync";
 import { generateModelInsights } from "../utils/modelInsights";
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
+import { useSession } from "../contexts/SessionContext";
 
 function MlPlayground() {
   const { dataset_id } = useParams();
   const { notify } = useNotification();
+  const { session, updateSession } = useSession();
+  const sessionSynced = useRef(false);
 
   // =============================
   // Restore playground config from storage (survives navigation)
   // =============================
   const storedPlayground = dataset_id ? storageUtils.getPlaygroundConfig(dataset_id) : {};
 
-  const [targetColumn, setTargetColumn] = useState("");
+  const targetColumn = session?.target_column || "";
   const [problemType, setProblemType] = useState("");
   const [algorithm, setAlgorithm] = useState(storedPlayground.algorithm);
   const [modelInsights, setModelInsights] = useState([]);
@@ -31,6 +34,19 @@ function MlPlayground() {
 
   const mlConfig = storageUtils.getMLConfig(dataset_id);
   const preprocessConfig = mlConfig?.preprocess_config || {};
+
+  // Sync session from backend on mount — restores problem type, algorithm, etc.
+  useEffect(() => {
+    if (!dataset_id || sessionSynced.current) return;
+    sessionSynced.current = true;
+
+    storageUtils.syncDatasetSession(dataset_id).then(() => {
+      const updated = storageUtils.getMLConfig(dataset_id);
+      if (updated.problem_type && !problemType) setProblemType(updated.problem_type);
+      const pg = storageUtils.getPlaygroundConfig(dataset_id);
+      if (pg.algorithm && !algorithm) setAlgorithm(pg.algorithm);
+    });
+  }, [dataset_id]);
 
   // Persist algorithm/params whenever they change
   useEffect(() => {
@@ -59,17 +75,7 @@ function MlPlayground() {
   });
 
   // =============================
-  // Load target column
-  // =============================
-  useEffect(() => {
-    const storedTarget = mlConfig?.target_column;
-    if (storedTarget) {
-      setTargetColumn(storedTarget);
-    }
-  }, [dataset_id]);
-
-  // =============================
-  // Detect problem type — preserve stored algorithm if one exists
+  // Detect problem type from target column
   // =============================
   useEffect(() => {
     if (!targetColumn) {
@@ -77,7 +83,7 @@ function MlPlayground() {
       return;
     }
 
-    const columnTypes = storageUtils.getColumnTypes();
+    const columnTypes = storageUtils.getColumnTypes() || [];
     const targetColInfo = columnTypes.find(
       (col) => col.column === targetColumn
     );
@@ -139,7 +145,7 @@ function MlPlayground() {
   // =============================
   useEffect(() => {
     if (dataset_id) {
-      const settings = storageUtils.getAiSettings(dataset_id);
+      const settings = storageUtils.getAiSettings();
       setAiEnabled(settings.mode === "ai");
     }
   }, [dataset_id]);
@@ -156,16 +162,9 @@ function MlPlayground() {
   // =============================
   const handleTargetChange = useCallback(
     (column) => {
-      setTargetColumn(column);
-
-      const updatedConfig = {
-        ...mlConfig,
-        target_column: column
-      };
-
-      storageUtils.setMLConfig(dataset_id, updatedConfig);
+      updateSession({ target_column: column });
     },
-    [dataset_id, mlConfig]
+    [updateSession]
   );
 
   const handleTrain = useCallback(async () => {
@@ -198,7 +197,7 @@ function MlPlayground() {
   // =============================
   // Data prep
   // =============================
-  const columnTypes = storageUtils.getColumnTypes();
+  const columnTypes = storageUtils.getColumnTypes() || [];
   const columnNames = columnTypes.map((col) => col.column);
 
   // =============================

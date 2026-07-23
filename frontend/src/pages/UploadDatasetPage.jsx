@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 
 import UploadBox from "../components/UploadDataset/UploadBox";
@@ -13,91 +13,104 @@ import { getAdvancedRecommendations } from "../utils/getAdvancedRecommendations"
 import { analyzeColumns } from "../utils/analyzeColumns";
 import { storageUtils } from "../utils/storageUtils";
 import { useNotification } from "../contexts/NotificationContext";
+import { useSession } from "../contexts/SessionContext";
+import { datasetAPI } from "../../services/api";
 
 function UploadPage() {
   const navigate = useNavigate();
   const { notify } = useNotification();
-  
+  const { dataset: sessionDataset, datasetId: globalDatasetId, session, updateSession, clearSession } = useSession();
+  const restored = useRef(false);
+
   const [file, setFile] = useState(null);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
-  const [target, setTarget] = useState("");
   const [datasetId, setDatasetId] = useState(null);
-  const [columnTypes, setColumnTypes] = useState({});
+  const [columnTypes, setColumnTypesInState] = useState({});
   const [aiMode, setAiMode] = useState(false);
 
-  // Restore from storage on mount
+  const target = session?.target_column || "";
+
+  const handleTargetChange = useCallback((column) => {
+    updateSession({ target_column: column });
+  }, [updateSession]);
+
+  // Restore full upload state from backend session on mount
   useEffect(() => {
-    const stored = storageUtils.getColumnTypes();
-    if (stored && Array.isArray(stored)) {
-      const map = {};
-      stored.forEach((col) => {
-        map[col.column.trim().toLowerCase()] = col.type;
-      });
-      setColumnTypes(map);
+    if (!globalDatasetId || restored.current) return;
+    restored.current = true;
+
+    setDatasetId(globalDatasetId);
+
+    const settings = storageUtils.getAiSettings();
+    setAiMode(settings.mode === "ai");
+
+    // If session dataset already has preview, use it immediately
+    const cachedPreview = storageUtils.getPreviewData();
+    const cachedTypes = storageUtils.getColumnTypes();
+
+    if (cachedPreview && cachedPreview.length > 0) {
+      setData(cachedPreview);
+      if (cachedTypes && cachedTypes.length > 0) {
+        const typeMap = {};
+        cachedTypes.forEach((t) => { typeMap[t.column] = t.type; });
+        setColumnTypesInState(typeMap);
+      }
+      const cachedFileName = storageUtils.getFileName();
+      if (cachedFileName) {
+        setFile({ name: cachedFileName });
+      }
+      return;
     }
 
-    const savedFileName = storageUtils.getFileName();
-    const savedPreview = storageUtils.getPreviewData();
-    const savedDatasetId = storageUtils.getDatasetId();
+    // Otherwise fetch from backend
+    datasetAPI.get(globalDatasetId).then((res) => {
+      if (!restored.current) return;
+      if (!res?.data) return;
+      const d = res.data;
 
-    if (savedFileName) {
-      setFile({ name: savedFileName, size: 0 });
-    }
-    if (savedPreview && Array.isArray(savedPreview)) {
-      setData(savedPreview);
-    }
-    if (savedDatasetId) {
-      setDatasetId(savedDatasetId);
-    }
+      setDatasetId(d.dataset_id);
 
-    const savedTarget = storageUtils.getTargetColumn();
-    if (savedTarget) {
-      setTarget(savedTarget);
-    }
-  }, []);
+      const preview = d.preview || [];
+      setData(preview);
+      storageUtils.setPreviewData(preview);
 
-  // Restore AI mode from session storage
+      const types = d.column_types || [];
+      storageUtils.setColumnTypes(types);
+      const typeMap = {};
+      types.forEach((t) => { typeMap[t.column] = t.type; });
+      setColumnTypesInState(typeMap);
+
+      if (d.filename) {
+        storageUtils.setFileName(d.filename);
+        setFile({ name: d.filename, size: Math.round(d.file_size_mb * 1024 * 1024) });
+      }
+    }).catch(() => {});
+  }, [globalDatasetId]);
+
+  // Persist AI mode
   useEffect(() => {
-    if (datasetId) {
-      const settings = storageUtils.getAiSettings(datasetId);
-      setAiMode(settings.mode === "ai");
-    }
-  }, [datasetId]);
-
-  // Persist AI mode when it changes
-  useEffect(() => {
-    if (datasetId) {
-      storageUtils.saveAiSettings(datasetId, { mode: aiMode ? "ai" : "static" });
-    }
+    storageUtils.saveAiSettings({ mode: aiMode ? "ai" : "static" });
   }, [aiMode, datasetId]);
 
-  // Persist file and data preview when they change
-  useEffect(() => {
-    if (file) {
-      storageUtils.setFileName(file.name);
-    }
-    if (data) {
-      storageUtils.setPreviewData(data.slice(0, 20));
-    }
-  }, [file, data]);
-
-  // Persist target selection
-  useEffect(() => {
-    if (target && datasetId) {
-      storageUtils.setTargetColumn(datasetId, target);
-    }
-  }, [target, datasetId]);
-
-  // Handlers
   const handleReset = useCallback(() => {
-    storageUtils.clearDataset();
+    const id = datasetId;
+    if (id) {
+      storageUtils.clearDataset(id);
+    }
+    updateSession({ target_column: "", problem_type: "", preprocess_config: {} });
     setFile(null);
     setData(null);
     setDatasetId(null);
     setError("");
-    setTarget("");
-  }, []);
+    setColumnTypesInState({});
+    storageUtils._columnTypes = null;
+    storageUtils._fileName = null;
+    storageUtils._previewData = null;
+    storageUtils.setDatasetId("");
+    clearSession();
+    restored.current = false;
+  }, [datasetId, clearSession, updateSession]);
 
   const handleProceed = useCallback(() => {
     if (datasetId && target) {
@@ -105,8 +118,15 @@ function UploadPage() {
     }
   }, [datasetId, target, navigate]);
 
-  // Compute analysis
   const analysis = analyzeDataset(data);
+  const actualRowCount = sessionDataset?.rows || analysis?.rows || 0;
+  const actualColumnCount = sessionDataset?.columns || analysis?.columns || 0;
+
+  const displayAnalysis = data && analysis ? {
+    ...analysis,
+    rows: Math.max(analysis.rows, actualRowCount),
+    columns: Math.max(analysis.columns, actualColumnCount),
+  } : analysis;
   const columnAnalysis = analyzeColumns(data);
   const columns = data && data.length > 0 ? Object.keys(data[0]) : [];
   const advancedRecommendations = getAdvancedRecommendations(
@@ -121,28 +141,40 @@ function UploadPage() {
 
       {error && <div className="text-red-500 mt-4 p-3 bg-red-50 rounded">{error}</div>}
 
+      {datasetId && !file && (
+        <div className="mt-4 p-4 bg-blue-50 border border-blue-200 rounded-xl">
+          <p className="text-blue-700 font-medium">
+            Active dataset session restored
+          </p>
+          <p className="text-blue-600 text-sm mt-1">
+            Dataset ID: {datasetId}
+            {sessionDataset?.filename ? ` — ${sessionDataset.filename}` : ""}
+          </p>
+        </div>
+      )}
+
       <UploadBox
         file={file}
         setFile={setFile}
         setData={setData}
         setError={setError}
         setDatasetId={setDatasetId}
-        setColumnTypes={setColumnTypes}
+        setColumnTypes={setColumnTypesInState}
       />
 
       {file && (
         <div className="mt-4 text-green-600">
-          ✓ {file.name} ({(file.size / 1024).toFixed(2)} KB)
+          ✓ {file.name}{file.size ? ` (${(file.size / 1024).toFixed(2)} KB)` : ""}
         </div>
       )}
 
-      <MetadataCards analysis={analysis} />
+      <MetadataCards analysis={displayAnalysis} />
 
       <TargetSelector
         columns={columns}
         data={data}
         target={target}
-        setTarget={setTarget}
+        setTarget={handleTargetChange}
       />
 
       {datasetId && (

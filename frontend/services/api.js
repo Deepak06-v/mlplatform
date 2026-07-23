@@ -37,7 +37,14 @@ export const datasetAPI = {
     return api.post("/dataset/upload", formData, {
       headers: { "Content-Type": "multipart/form-data" }
     });
-  }
+  },
+
+  /**
+   * Get full dataset metadata including preview rows
+   * @param {string} datasetId
+   * @returns {Promise} Dataset metadata + preview
+   */
+  get: (datasetId) => api.get(`/dataset/${datasetId}`),
 };
 
 /**
@@ -117,6 +124,74 @@ export const sessionAPI = {
   upsert: (datasetId, data) => api.put(`/session/${datasetId}`, data),
   patch: (datasetId, data) => api.patch(`/session/${datasetId}`, data),
   delete: (datasetId) => api.delete(`/session/${datasetId}`),
+};
+
+/**
+ * Experiment APIs
+ */
+export const experimentAPI = {
+  create: (data) => api.post("/experiments/create", data),
+  list: (datasetId) => api.get(`/experiments/list${datasetId ? `?dataset_id=${datasetId}` : ""}`),
+  count: () => api.get("/experiments/count"),
+  best: (datasetId) => api.get(`/experiments/best?dataset_id=${datasetId}`),
+  delete: (datasetId) => api.delete(`/experiments/${datasetId}`),
+};
+
+/**
+ * Comparison APIs
+ */
+export const comparisonAPI = {
+  create: (datasetId, ranking) => api.post("/comparisons/create", { dataset_id: datasetId, ranking }),
+  get: (datasetId) => api.get(`/comparisons/${datasetId}`),
+  delete: (datasetId) => api.delete(`/comparisons/${datasetId}`),
+};
+
+/**
+ * Activity APIs
+ */
+export const activityAPI = {
+  create: (data) => api.post("/activities/create", data),
+  list: (datasetId) => api.get(`/activities/${datasetId}`),
+  listAll: (limit = 50) => api.get(`/activities?limit=${limit}`),
+  delete: (datasetId) => api.delete(`/activities/${datasetId}`),
+};
+
+/**
+ * Monitoring APIs
+ */
+export const monitoringAPI = {
+  health: () => api.get("/health"),
+  healthMemory: () => api.get("/health/memory"),
+  healthStorage: () => api.get("/health/storage"),
+  healthCache: () => api.get("/health/cache"),
+  metrics: () => api.get("/metrics"),
+  version: () => api.get("/version"),
+};
+
+/**
+ * Settings / Config APIs
+ */
+export const settingsAPI = {
+  config: () => api.get("/settings/config"),
+  get: () => api.get("/settings"),
+  update: (payload) => api.put("/settings", payload),
+  reset: () => api.post("/settings/reset"),
+};
+
+/**
+ * Cache Management APIs
+ */
+export const cacheAPI = {
+  clearDataset: () => api.post("/cache/clear/dataset"),
+  clearAi: () => api.post("/cache/clear/ai"),
+};
+
+/**
+ * Cleanup APIs
+ */
+export const cleanupAPI = {
+  report: () => api.post("/cleanup/report"),
+  execute: (dryRun = true) => api.post(`/cleanup/execute?dry_run=${dryRun}`),
 };
 
 /**

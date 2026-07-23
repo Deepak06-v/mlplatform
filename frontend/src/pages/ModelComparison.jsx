@@ -1,13 +1,18 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useParams } from "react-router-dom";
 import { storageUtils } from "../utils/storageUtils";
 import { edaAPI } from "../../services/api";
 import ModelComparisonDashboard from "../components/ModelComparison/ModelComparisonDashboard";
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
+import { useSession } from "../contexts/SessionContext";
 
 function ModelComparison() {
-  const datasetId = storageUtils.getDatasetId();
-  const mlConfig = storageUtils.getMLConfig(datasetId);
+  const { dataset_id } = useParams();
+  const { session: globalSession } = useSession();
+  const sessionSynced = useRef(false);
+
+  const mlConfig = storageUtils.getMLConfig(dataset_id);
 
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -15,21 +20,30 @@ function ModelComparison() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const { notify } = useNotification();
 
+  // Sync session from backend on mount to restore config
+  useEffect(() => {
+    if (!dataset_id || sessionSynced.current) return;
+    sessionSynced.current = true;
+    storageUtils.syncDatasetSession(dataset_id);
+  }, [dataset_id]);
+
   const fetchComparison = async () => {
     try {
       setLoading(true);
       setError(null);
 
+      const updatedConfig = storageUtils.getMLConfig(dataset_id);
+
       const response = await edaAPI.compareModels(
-        datasetId,
-        mlConfig.target_column,
-        mlConfig.problem_type,
-        mlConfig.preprocess_config
+        dataset_id,
+        updatedConfig.target_column,
+        updatedConfig.problem_type,
+        updatedConfig.preprocess_config
       );
 
       setData(response.data);
-      storageUtils.saveComparisonResult(datasetId, response.data);
-      storageUtils.addActivity(datasetId, {
+      storageUtils.saveComparisonResult(dataset_id, response.data);
+      storageUtils.addActivity(dataset_id, {
         type: "comparison",
         title: "Model comparison completed",
         description: `${response.data?.leaderboard?.length || 0} models compared`
@@ -45,29 +59,28 @@ function ModelComparison() {
   };
 
   useEffect(() => {
-    if (!datasetId) return;
+    if (!dataset_id) return;
 
-    // Restore AI settings
-    const settings = storageUtils.getAiSettings(datasetId);
+    const settings = storageUtils.getAiSettings();
     setAiEnabled(settings.mode === "ai");
 
-    const cached = storageUtils.getComparisonResult(datasetId);
+    const cached = storageUtils.getComparisonResult(dataset_id);
     if (cached?.result) {
       setData(cached.result);
       return;
     }
 
     fetchComparison();
-  }, [datasetId]);
+  }, [dataset_id]);
 
   const comparisonAi = useAiRecommendation({
-    datasetId,
+    datasetId: dataset_id,
     page: "comparison",
     store: storageUtils,
     enabled: aiEnabled
   });
 
-  if (!datasetId) {
+  if (!dataset_id) {
     return (
       <div className="p-6 bg-red-50 border border-red-200 rounded-xl text-red-800 text-center">
         <p className="font-semibold">No dataset selected</p>

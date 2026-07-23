@@ -60,54 +60,25 @@ function ActivityIcon({ type }) {
 export default function DashboardPage() {
   const navigate = useNavigate();
   const datasetId = storageUtils.getDatasetId();
-  const session = datasetId ? storageUtils.getDatasetSession(datasetId) : null;
-  const fileName = storageUtils.getFileName();
 
   const [datasets, setDatasets] = useState(null);
   const [healthStatus, setHealthStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    let cancelled = false;
-    async function load() {
-      try {
-        const [dsRes, hRes] = await Promise.allSettled([
-          datasetsAPI.list(),
-          dashboardAPI.health()
-        ]);
-        if (cancelled) return;
-        if (dsRes.status === "fulfilled") setDatasets(dsRes.value?.data || []);
-        if (hRes.status === "fulfilled") setHealthStatus(hRes.value);
-      } catch {}
-      if (!cancelled) setLoading(false);
-    }
-    load();
-    return () => { cancelled = true; };
-  }, []);
+  // All application state loaded from backend APIs + in-memory caches
+  const eda = storageUtils.getEDA(datasetId);
+  const trainingResult = storageUtils.getPlaygroundResult(datasetId);
+  const comparison = storageUtils.getComparisonResult(datasetId);
+  const mlConfig = storageUtils.getMLConfig(datasetId);
+  const preprocessConfig = storageUtils.getPreprocessConfig(datasetId);
+  const activities = storageUtils.getActivities(datasetId);
+  const fileName = storageUtils.getFileName();
 
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-        <div className="text-center">
-          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
-
-  const eda = session?.eda;
-  const trainingResult = session?.playground?.training_result;
-  const trainingTimestamp = session?.playground?.training_timestamp;
-  const comparison = session?.comparison;
-  const mlConfig = session ? {
-    target_column: session.target_column || "",
-    problem_type: session.problem_type || "",
-    algorithm: session.playground?.algorithm || ""
-  } : {};
-  const preprocessConfig = session?.preprocess_config;
-  const activities = session?.activities || [];
-  const aiRecs = session?.ai_recommendations;
+  // AI copilot summary (from in-memory cache)
+  const aiPages = ["upload", "insights", "playground", "comparison"];
+  const hasAi = aiPages.some(p => storageUtils.getAiRecommendation(datasetId, p)?.status === "completed");
+  const firstAiRecPage = aiPages.find(p => storageUtils.getAiRecommendation(datasetId, p)?.status === "completed");
+  const aiData = firstAiRecPage ? storageUtils.getAiRecommendation(datasetId, firstAiRecPage)?.data : null;
 
   // Training history (append-only, each training is an experiment)
   const trainingHistory = datasetId ? storageUtils.getTrainingHistory(datasetId) : [];
@@ -134,14 +105,8 @@ export default function DashboardPage() {
   const leaderboard = comparison?.leaderboard || comparison?.result?.leaderboard || [];
   const topModels = [...leaderboard].sort((a, b) => (b.score || 0) - (a.score || 0));
 
-  // AI copilot summary
-  const aiPages = ["upload", "insights", "playground", "comparison"];
-  const hasAi = aiPages.some(p => aiRecs?.[p]?.status === "completed");
-  const firstAiRec = aiPages.find(p => aiRecs?.[p]?.status === "completed");
-  const aiData = firstAiRec ? aiRecs[firstAiRec]?.data : null;
-
-  // Total trained models across all sessions
-  const totalTrained = storageUtils.countTrainedModels();
+  // Model count (from experiments cache)
+  const totalTrained = datasetId ? (trainingHistory.length || 0) : 0;
 
   // Recent activities (last 10)
   const recentActivities = [...activities].reverse().slice(0, 10);
@@ -149,10 +114,43 @@ export default function DashboardPage() {
   // Latest 3 experiments for Recent Models display
   const recentModels = [...trainingHistory].reverse().slice(0, 3);
 
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      try {
+        const [dsRes, hRes, sessionRes] = await Promise.allSettled([
+          datasetsAPI.list(),
+          dashboardAPI.health(),
+          datasetId ? storageUtils.syncDatasetSession(datasetId) : Promise.resolve(),
+          datasetId ? storageUtils.syncExperiments(datasetId) : Promise.resolve(),
+          datasetId ? storageUtils.syncComparison(datasetId) : Promise.resolve(),
+          datasetId ? storageUtils.syncActivities(datasetId) : Promise.resolve()
+        ]);
+        if (cancelled) return;
+        if (dsRes.status === "fulfilled") setDatasets(dsRes.value?.data || []);
+        if (hRes.status === "fulfilled") setHealthStatus(hRes.value);
+      } catch {}
+      if (!cancelled) setLoading(false);
+    }
+    load();
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [datasetId]);
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">Loading dashboard...</p>
+        </div>
+      </div>
+    );
+  }
+
   const backendCount = Array.isArray(datasets) ? datasets.length : 0;
-  const localHasDataset = !!datasetId && !!session;
-  const datasetCount = backendCount > 0 ? backendCount : (localHasDataset ? 1 : 0);
-  const hasDataset = !!datasetId && !!session;
+  const hasDataset = !!datasetId && (!!eda || !!trainingResult || !!comparison || !!mlConfig.target_column);
+  const datasetCount = backendCount > 0 ? backendCount : (hasDataset ? 1 : 0);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -202,7 +200,7 @@ export default function DashboardPage() {
           <StatCard
             label="AI Copilot"
             value={hasAi ? "Active" : "Inactive"}
-            sub={hasAi ? "Recommendations ready" : (storageUtils.getAiSettings(datasetId)?.mode === "ai" ? "Waiting" : "Disabled")}
+            sub={hasAi ? "Recommendations ready" : (storageUtils.getAiSettings()?.mode === "ai" ? "Waiting" : "Disabled")}
             color={hasAi ? "text-indigo-600" : "text-gray-400"}
           />
           <StatCard
@@ -279,7 +277,7 @@ export default function DashboardPage() {
             <p className="text-sm text-gray-400 py-4 text-center">Upload a dataset to see AI recommendations.</p>
           ) : !hasAi ? (
             <div className="text-sm text-gray-400 py-4 text-center">
-              {storageUtils.getAiSettings(datasetId)?.mode === "ai"
+              {storageUtils.getAiSettings()?.mode === "ai"
                 ? "AI recommendations will appear once generated."
                 : "Enable AI mode on the Upload page to get AI-powered recommendations."}
             </div>
@@ -401,7 +399,7 @@ export default function DashboardPage() {
               <StatusRow label="Backend" status={healthStatus?.services?.backend} />
               <StatusRow label="MongoDB" status={healthStatus?.services?.mongodb} />
               <StatusRow label="AI Service" status={healthStatus?.services?.ai_service} />
-              <StatusRow label="Cache" status={session ? "available" : "empty"} />
+              <StatusRow label="Cache" status={healthStatus?.services?.dataset_cache} />
               <StatusRow label="API Version" status={healthStatus?.version || "—"} />
             </div>
           </Section>

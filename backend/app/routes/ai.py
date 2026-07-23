@@ -39,7 +39,11 @@ def get_ai_recommendations(request: AIRecommendationRequest):
         request.page, request.dataset_id
     )
 
-    result = ai_service.get_recommendation(request.page, request.context)
+    result = ai_service.get_recommendation(
+        page=request.page,
+        context=request.context,
+        dataset_id=request.dataset_id
+    )
 
     logger.info(
         "AI recommendation completed: page=%s status=%s from_cache=%s",

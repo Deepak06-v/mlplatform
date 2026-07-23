@@ -44,6 +44,7 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
         }
         setDatasetId(datasetId);
         storageUtils.setDatasetId(datasetId);
+        storageUtils.setFileName(uploadedFile.name);
         storageUtils.addActivity(datasetId, {
           type: "upload",
           title: "Dataset uploaded",
@@ -157,7 +158,7 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
           <p className="mt-2 font-medium">{file.name}</p>
 
           <p className="text-sm text-gray-500">
-            {(file.size / 1024).toFixed(2)} KB
+            {file.size ? `${(file.size / 1024).toFixed(2)} KB` : ""}
           </p>
 
           <p className="text-xs text-gray-400 mt-2">

@@ -1,319 +1,246 @@
-import { sessionAPI } from "../../services/api";
+import { sessionAPI, experimentAPI, comparisonAPI, activityAPI } from "../../services/api";
 
-const STORAGE_KEYS = {
-  DATASET_ID: "dataset_id",
-  COLUMN_TYPES: "column_types",
-  FILE_NAME: "file_name",
-  PREVIEW_DATA: "preview_data"
-};
-
-const SESSION_PREFIX = "session_";
-const META_PREFIX = "session_meta_";
-const SESSION_FIELDS = new Set(["target_column", "problem_type", "preprocess_config", "current_pipeline_stage"]);
-
-function deepMerge(target, source) {
-  const output = { ...target };
-  for (const key of Object.keys(source)) {
-    if (
-      source[key] &&
-      typeof source[key] === "object" &&
-      !Array.isArray(source[key]) &&
-      output[key] &&
-      typeof output[key] === "object" &&
-      !Array.isArray(output[key])
-    ) {
-      output[key] = deepMerge(output[key], source[key]);
-    } else {
-      output[key] = source[key];
-    }
-  }
-  return output;
-}
+const UI_PREFS_KEY = "ui_prefs";
 
 export const storageUtils = {
   // =============================
-  // Legacy dataset metadata (transient, not in session)
-  // =============================
-  getDatasetId() {
-    return localStorage.getItem(STORAGE_KEYS.DATASET_ID);
-  },
-  setDatasetId(id) {
-    localStorage.setItem(STORAGE_KEYS.DATASET_ID, id);
-  },
-
-  getColumnTypes() {
-    const data = localStorage.getItem(STORAGE_KEYS.COLUMN_TYPES);
-    return data ? JSON.parse(data) : [];
-  },
-  setColumnTypes(types) {
-    localStorage.setItem(STORAGE_KEYS.COLUMN_TYPES, JSON.stringify(types));
-  },
-
-  getFileName() {
-    return localStorage.getItem(STORAGE_KEYS.FILE_NAME);
-  },
-  setFileName(name) {
-    localStorage.setItem(STORAGE_KEYS.FILE_NAME, name);
-  },
-
-  getPreviewData() {
-    const data = localStorage.getItem(STORAGE_KEYS.PREVIEW_DATA);
-    return data ? JSON.parse(data) : [];
-  },
-  setPreviewData(data) {
-    localStorage.setItem(STORAGE_KEYS.PREVIEW_DATA, JSON.stringify(data));
-  },
-
-  // =============================
-  // Per-dataset session
-  // Session fields (target_column, problem_type, preprocess_config,
-  // current_pipeline_stage) are synced to MongoDB via API.
-  // Non-session fields (eda, playground, comparison, ai, activities)
-  // remain in localStorage under session_<id>.
+  // UI Preferences (persisted in localStorage only)
   // =============================
 
-  // --- Internal helpers for session meta (in-memory + localStorage cache) ---
-
-  _getSessionMeta(datasetId) {
-    if (!datasetId) return {};
+  _getUiPrefs() {
     try {
-      const data = localStorage.getItem(META_PREFIX + datasetId);
-      return data ? JSON.parse(data) : {};
+      return JSON.parse(localStorage.getItem(UI_PREFS_KEY)) || {};
     } catch {
       return {};
     }
   },
 
-  _setSessionMeta(datasetId, data) {
-    if (!datasetId) return;
-    const existing = this._getSessionMeta(datasetId);
-    const merged = deepMerge(existing, data);
-    localStorage.setItem(META_PREFIX + datasetId, JSON.stringify(merged));
+  _setUiPrefs(prefs) {
+    localStorage.setItem(UI_PREFS_KEY, JSON.stringify(prefs));
   },
 
-  // --- Session CRUD (synchronous, backed by local cache + async API) ---
-
-  getDatasetSession(datasetId) {
-    if (!datasetId) return null;
-    try {
-      // Session fields from meta cache
-      const meta = this._getSessionMeta(datasetId);
-      // Non-session fields from legacy session key
-      const localData = localStorage.getItem(SESSION_PREFIX + datasetId);
-      const local = localData ? JSON.parse(localData) : {};
-      return { ...local, ...meta };
-    } catch {
-      return null;
-    }
+  getUiPref(key, defaultValue = null) {
+    return this._getUiPrefs()[key] ?? defaultValue;
   },
 
-  saveDatasetSession(datasetId, session) {
-    if (!datasetId) return;
-    const sessionFields = {};
-    const nonSessionFields = {};
-    for (const [key, value] of Object.entries(session)) {
-      if (SESSION_FIELDS.has(key)) {
-        sessionFields[key] = value;
-      } else {
-        nonSessionFields[key] = value;
-      }
-    }
-    if (Object.keys(sessionFields).length > 0) {
-      this._setSessionMeta(datasetId, sessionFields);
-      sessionAPI.upsert(datasetId, sessionFields).catch(() => {});
-    }
-    if (Object.keys(nonSessionFields).length > 0) {
-      const existing = localStorage.getItem(SESSION_PREFIX + datasetId);
-      const local = existing ? JSON.parse(existing) : {};
-      const merged = deepMerge(local, nonSessionFields);
-      localStorage.setItem(SESSION_PREFIX + datasetId, JSON.stringify(merged));
-    }
+  setUiPref(key, value) {
+    const prefs = this._getUiPrefs();
+    prefs[key] = value;
+    this._setUiPrefs(prefs);
   },
 
-  updateDatasetSession(datasetId, updates) {
-    if (!datasetId) return;
-    const sessionUpdates = {};
-    const nonSessionUpdates = {};
-    for (const [key, value] of Object.entries(updates)) {
-      if (SESSION_FIELDS.has(key)) {
-        sessionUpdates[key] = value;
-      } else {
-        nonSessionUpdates[key] = value;
-      }
-    }
-    if (Object.keys(sessionUpdates).length > 0) {
-      this._setSessionMeta(datasetId, sessionUpdates);
-      sessionAPI.patch(datasetId, sessionUpdates).catch(() => {});
-    }
-    if (Object.keys(nonSessionUpdates).length > 0) {
-      const existing = localStorage.getItem(SESSION_PREFIX + datasetId);
-      const local = existing ? JSON.parse(existing) : {};
-      const merged = deepMerge(local, nonSessionUpdates);
-      localStorage.setItem(SESSION_PREFIX + datasetId, JSON.stringify(merged));
-    }
+  // Convenience wrappers — last dataset
+  getDatasetId() {
+    return this.getUiPref("lastDatasetId", "");
   },
 
-  clearDatasetSession(datasetId) {
-    if (!datasetId) return;
-    localStorage.removeItem(META_PREFIX + datasetId);
-    localStorage.removeItem(SESSION_PREFIX + datasetId);
-    sessionAPI.delete(datasetId).catch(() => {});
+  setDatasetId(id) {
+    this.setUiPref("lastDatasetId", id);
   },
 
-  // --- Sync from API (called on page mount to hydrate local cache) ---
+  // Convenience wrappers — AI mode
+  getAiSettings() {
+    return this.getUiPref("aiSettings", { mode: "static" });
+  },
 
-  async syncDatasetSession(datasetId) {
-    if (!datasetId) return;
-    try {
-      const response = await sessionAPI.get(datasetId);
-      if (response && response.data) {
-        const meta = {};
-        for (const key of SESSION_FIELDS) {
-          if (response.data[key] !== undefined && response.data[key] !== null) {
-            meta[key] = response.data[key];
-          }
-        }
-        if (Object.keys(meta).length > 0) {
-          this._setSessionMeta(datasetId, meta);
-        }
-      }
-    } catch {
-      // API unavailable — keep local cache as-is
+  saveAiSettings(settings) {
+    this.setUiPref("aiSettings", settings);
+  },
+
+  // =============================
+  // In-memory caches (current session only, no localStorage)
+  // =============================
+
+  _sessionCache: {},
+  _edaCache: {},
+  _fiCache: {},
+  _aiCache: {},
+  _experimentsCache: {},
+  _comparisonCache: {},
+  _activitiesCache: {},
+  _columnTypes: null,
+  _fileName: null,
+  _previewData: null,
+
+  // --- Column Types (in-memory, populated on upload) ---
+
+  getColumnTypes() {
+    return this._columnTypes;
+  },
+
+  setColumnTypes(types) {
+    this._columnTypes = types;
+  },
+
+  // --- File Name (in-memory, populated on upload) ---
+
+  getFileName() {
+    return this._fileName;
+  },
+
+  setFileName(name) {
+    this._fileName = name;
+  },
+
+  // --- Preview Data (in-memory, populated on upload) ---
+
+  getPreviewData() {
+    return this._previewData;
+  },
+
+  setPreviewData(data) {
+    this._previewData = data;
+  },
+
+  // --- Session fields (in-memory + API) ---
+
+  _getSession(datasetId) {
+    if (!datasetId) return {};
+    if (!this._sessionCache[datasetId]) {
+      this._sessionCache[datasetId] = {};
     }
+    return this._sessionCache[datasetId];
   },
 
-  // --- Backward-compatible wrappers that delegate to the session ---
-
-  // Target column
   getTargetColumn(datasetId) {
-    const session = this.getDatasetSession(datasetId);
-    return session?.target_column || "";
+    return this._getSession(datasetId).target_column || "";
   },
 
   setTargetColumn(datasetId, columnName) {
     if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { target_column: columnName });
+    this._getSession(datasetId).target_column = columnName;
+    sessionAPI.patch(datasetId, { target_column: columnName }).catch(() => {});
   },
 
-  // ML Config (aggregated for backward compat)
+  getPreprocessConfig(datasetId) {
+    return this._getSession(datasetId).preprocess_config || {};
+  },
+
+  savePreprocessConfig(datasetId, config) {
+    if (!datasetId) return;
+    this._getSession(datasetId).preprocess_config = config;
+    sessionAPI.patch(datasetId, { preprocess_config: config }).catch(() => {});
+  },
+
   getMLConfig(datasetId) {
-    const session = this.getDatasetSession(datasetId);
-    if (!session) return {};
+    const session = this._getSession(datasetId);
     return {
       target_column: session.target_column || "",
       problem_type: session.problem_type || "",
       preprocess_config: session.preprocess_config || {},
-      algorithm: session.playground?.algorithm || "",
-      params: session.playground?.params || {}
+      algorithm: session.algorithm || "",
+      params: session.params || {}
     };
   },
 
   setMLConfig(datasetId, config) {
     if (!datasetId) return;
-    const existing = this.getDatasetSession(datasetId) || { dataset_id: datasetId };
-    if (config.target_column !== undefined) existing.target_column = config.target_column;
-    if (config.problem_type !== undefined) existing.problem_type = config.problem_type;
-    if (config.preprocess_config !== undefined) existing.preprocess_config = config.preprocess_config;
-    if (config.algorithm !== undefined || config.params !== undefined) {
-      existing.playground = existing.playground || {};
-      if (config.algorithm !== undefined) existing.playground.algorithm = config.algorithm;
-      if (config.params !== undefined) existing.playground.params = config.params;
+    const session = this._getSession(datasetId);
+    if (config.target_column !== undefined) session.target_column = config.target_column;
+    if (config.problem_type !== undefined) session.problem_type = config.problem_type;
+    if (config.preprocess_config !== undefined) session.preprocess_config = config.preprocess_config;
+    if (config.algorithm !== undefined) session.algorithm = config.algorithm;
+    if (config.params !== undefined) session.params = config.params;
+    const payload = {};
+    for (const key of ["target_column", "problem_type", "preprocess_config"]) {
+      if (config[key] !== undefined) payload[key] = config[key];
     }
-    this.saveDatasetSession(datasetId, existing);
+    if (Object.keys(payload).length > 0) {
+      sessionAPI.patch(datasetId, payload).catch(() => {});
+    }
   },
 
-  // EDA results
-  getEDA(datasetId) {
-    if (!datasetId) return null;
-    const session = this.getDatasetSession(datasetId);
-    return session?.eda || null;
-  },
-
-  saveEDA(datasetId, data) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { eda: data });
-  },
-
-  removeEDA(datasetId) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { eda: null });
-  },
-
-  // Feature Importance (per target column, stored in session.playground.feature_importance)
-  getFeatureImportance(datasetId, targetColumn) {
-    if (!datasetId || !targetColumn) return null;
-    const session = this.getDatasetSession(datasetId);
-    return session?.playground?.feature_importance?.[targetColumn] || null;
-  },
-
-  saveFeatureImportance(datasetId, targetColumn, data) {
-    if (!datasetId || !targetColumn) return;
-    this.updateDatasetSession(datasetId, {
-      playground: {
-        feature_importance: { [targetColumn]: data }
-      }
-    });
-  },
-
-  removeFeatureImportance(datasetId, targetColumn) {
-    if (!datasetId || !targetColumn) return;
-    this.updateDatasetSession(datasetId, {
-      playground: { feature_importance: { [targetColumn]: null } }
-    });
-  },
-
-  // Preprocessing Config
-  getPreprocessConfig(datasetId) {
-    const session = this.getDatasetSession(datasetId);
-    return session?.preprocess_config || {};
-  },
-
-  savePreprocessConfig(datasetId, preprocessConfig) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { preprocess_config: preprocessConfig });
-  },
-
-  // ML Playground Config
   getPlaygroundConfig(datasetId) {
-    const session = this.getDatasetSession(datasetId);
+    const session = this._getSession(datasetId);
     return {
-      algorithm: session?.playground?.algorithm || "",
-      params: session?.playground?.params || { max_depth: 5, n_estimators: 100 }
+      algorithm: session.algorithm || "",
+      params: session.params || { max_depth: 5, n_estimators: 100 }
     };
   },
 
   savePlaygroundConfig(datasetId, { algorithm, params }) {
     if (!datasetId) return;
-    const updates = { playground: {} };
-    if (algorithm !== undefined) updates.playground.algorithm = algorithm;
-    if (params !== undefined) updates.playground.params = params;
-    this.updateDatasetSession(datasetId, updates);
+    const session = this._getSession(datasetId);
+    if (algorithm !== undefined) session.algorithm = algorithm;
+    if (params !== undefined) session.params = params;
   },
 
-  // --- New session-specific methods ---
-
-  // Training result
   getPlaygroundResult(datasetId) {
     if (!datasetId) return null;
-    const session = this.getDatasetSession(datasetId);
-    return session?.playground?.training_result || null;
+    return this._getSession(datasetId).training_result || null;
   },
 
   savePlaygroundResult(datasetId, result) {
     if (!datasetId) return;
-    this.updateDatasetSession(datasetId, {
-      playground: {
-        training_result: result,
-        training_timestamp: new Date().toISOString()
-      }
+    this._getSession(datasetId).training_result = result;
+    this._getSession(datasetId).training_timestamp = new Date().toISOString();
+  },
+
+  // --- EDA results (in-memory) ---
+
+  getEDA(datasetId) {
+    if (!datasetId) return null;
+    return this._edaCache?.[datasetId] || null;
+  },
+
+  saveEDA(datasetId, data) {
+    if (!datasetId) return;
+    this._edaCache = this._edaCache || {};
+    this._edaCache[datasetId] = data;
+  },
+
+  removeEDA(datasetId) {
+    if (!datasetId || !this._edaCache) return;
+    delete this._edaCache[datasetId];
+  },
+
+  // --- Feature Importance (in-memory) ---
+
+  getFeatureImportance(datasetId, targetColumn) {
+    if (!datasetId || !targetColumn) return null;
+    return this._fiCache?.[`${datasetId}_${targetColumn}`] || null;
+  },
+
+  saveFeatureImportance(datasetId, targetColumn, data) {
+    if (!datasetId || !targetColumn) return;
+    this._fiCache = this._fiCache || {};
+    this._fiCache[`${datasetId}_${targetColumn}`] = data;
+  },
+
+  removeFeatureImportance(datasetId, targetColumn) {
+    if (!datasetId || !targetColumn || !this._fiCache) return;
+    delete this._fiCache[`${datasetId}_${targetColumn}`];
+  },
+
+  // --- AI Recommendations (in-memory) ---
+
+  getAiRecommendation(datasetId, page) {
+    if (!datasetId) return null;
+    return this._aiCache?.[`${datasetId}_${page}`] || null;
+  },
+
+  saveAiRecommendation(datasetId, page, aiResponse) {
+    if (!datasetId) return;
+    this._aiCache = this._aiCache || {};
+    this._aiCache[`${datasetId}_${page}`] = aiResponse;
+  },
+
+  removeAiRecommendation(datasetId, page) {
+    if (!datasetId || !this._aiCache) return;
+    delete this._aiCache[`${datasetId}_${page}`];
+  },
+
+  clearAllAiRecommendations(datasetId) {
+    if (!datasetId || !this._aiCache) return;
+    Object.keys(this._aiCache).forEach(key => {
+      if (key.startsWith(`${datasetId}_`)) delete this._aiCache[key];
     });
   },
 
-  // Training history (append-only, each training creates an experiment entry)
+  // --- Experiments (in-memory + API) ---
+
   addTrainingExperiment(datasetId, { response, algorithm, params, preprocessing, metrics, problem_type, target_column }) {
     if (!datasetId) return;
-    const session = this.getDatasetSession(datasetId) || { dataset_id: datasetId };
-    const history = session.playground?.training_history || [];
     const experiment = {
       experiment_id: `exp_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
       dataset_id: datasetId,
@@ -326,20 +253,17 @@ export const storageUtils = {
       target_column: target_column || "",
       training_time: null
     };
-    history.push(experiment);
-    this.updateDatasetSession(datasetId, {
-      playground: {
-        training_history: history,
-        training_result: response,
-        training_timestamp: experiment.timestamp
-      }
-    });
+    if (!this._experimentsCache[datasetId]) {
+      this._experimentsCache[datasetId] = [];
+    }
+    this._experimentsCache[datasetId].push(experiment);
+    this.savePlaygroundResult(datasetId, response);
+    experimentAPI.create(experiment).catch(() => {});
   },
 
   getTrainingHistory(datasetId) {
     if (!datasetId) return [];
-    const session = this.getDatasetSession(datasetId);
-    return session?.playground?.training_history || [];
+    return this._experimentsCache[datasetId] || [];
   },
 
   getBestModel(datasetId) {
@@ -360,78 +284,63 @@ export const storageUtils = {
     return 0;
   },
 
-  // Model Comparison result
+  async syncExperiments(datasetId) {
+    if (!datasetId) return;
+    try {
+      const response = await experimentAPI.list(datasetId);
+      if (response && Array.isArray(response.data)) {
+        if (response.data.length > 0) {
+          this._experimentsCache[datasetId] = response.data;
+        }
+      }
+    } catch {}
+  },
+
+  // --- Model Comparison (in-memory + API) ---
+
   getComparisonResult(datasetId) {
     if (!datasetId) return null;
-    const session = this.getDatasetSession(datasetId);
-    return session?.comparison || null;
+    return this._comparisonCache[datasetId] || null;
   },
 
   saveComparisonResult(datasetId, responseData) {
     if (!datasetId) return;
-    this.updateDatasetSession(datasetId, {
-      comparison: {
-        result: responseData,
-        leaderboard: responseData.leaderboard,
-        recommendation: responseData.recommendation,
-        best_model: responseData.best_model,
-        timestamp: new Date().toISOString()
+    this._comparisonCache[datasetId] = {
+      result: responseData,
+      leaderboard: responseData.leaderboard,
+      recommendation: responseData.recommendation,
+      best_model: responseData.best_model,
+      timestamp: new Date().toISOString()
+    };
+    comparisonAPI.create(datasetId, responseData).catch(() => {});
+  },
+
+  async syncComparison(datasetId) {
+    if (!datasetId) return;
+    try {
+      const response = await comparisonAPI.get(datasetId);
+      if (response && response.data && response.data.ranking) {
+        this._comparisonCache[datasetId] = {
+          result: response.data.ranking,
+          leaderboard: response.data.ranking.leaderboard,
+          recommendation: response.data.ranking.recommendation,
+          best_model: response.data.ranking.best_model,
+          timestamp: response.data.updated_at || new Date().toISOString()
+        };
       }
-    });
+    } catch {}
   },
 
-  // --- AI Recommendation cache (per-page, inside session) ---
-
-  getAiSettings(datasetId) {
-    if (!datasetId) return { mode: "static" };
-    const session = this.getDatasetSession(datasetId);
-    return session?.ai_settings || { mode: "static" };
-  },
-
-  saveAiSettings(datasetId, settings) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { ai_settings: settings });
-  },
-
-  getAiRecommendation(datasetId, page) {
-    if (!datasetId) return null;
-    const session = this.getDatasetSession(datasetId);
-    return session?.ai_recommendations?.[page] || null;
-  },
-
-  saveAiRecommendation(datasetId, page, aiResponse) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, {
-      ai_recommendations: { [page]: aiResponse }
-    });
-  },
-
-  removeAiRecommendation(datasetId, page) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, {
-      ai_recommendations: { [page]: null }
-    });
-  },
-
-  clearAllAiRecommendations(datasetId) {
-    if (!datasetId) return;
-    this.updateDatasetSession(datasetId, { ai_recommendations: null });
-  },
-
-  // =============================
-  // Activity Timeline
-  // =============================
+  // --- Activities (in-memory + API) ---
 
   getActivities(datasetId) {
     if (!datasetId) return [];
-    const session = this.getDatasetSession(datasetId);
-    return session?.activities || [];
+    return this._activitiesCache[datasetId] || [];
   },
 
   addActivity(datasetId, activity) {
     if (!datasetId) return;
-    const existing = this.getDatasetSession(datasetId);
-    const activities = existing?.activities || [];
+    const activities = this._activitiesCache[datasetId] || [];
     const entry = {
       type: activity.type,
       title: activity.title,
@@ -440,65 +349,100 @@ export const storageUtils = {
     };
     const updated = [...activities, entry];
     if (updated.length > 50) updated.splice(0, updated.length - 50);
-    this.updateDatasetSession(datasetId, { activities: updated });
+    this._activitiesCache[datasetId] = updated;
+    activityAPI.create({
+      activity_id: `act_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`,
+      dataset_id: datasetId,
+      activity_type: activity.type,
+      title: activity.title,
+      description: activity.description || "",
+      metadata: {},
+      severity: "info"
+    }).catch(() => {});
   },
 
-  // =============================
-  // Cross-dataset aggregations
-  // =============================
-
-  getAllSessions() {
-    const sessions = [];
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i);
-      if (key && (key.startsWith(SESSION_PREFIX) || key.startsWith(META_PREFIX))) {
-        try {
-          const data = JSON.parse(localStorage.getItem(key));
-          if (data) sessions.push(data);
-        } catch {}
+  async syncActivities(datasetId) {
+    if (!datasetId) return;
+    try {
+      const response = await activityAPI.list(datasetId);
+      if (response && Array.isArray(response.data) && response.data.length > 0) {
+        const existing = this._activitiesCache[datasetId] || [];
+        if (existing.length === 0) {
+          this._activitiesCache[datasetId] = response.data.map(a => ({
+            type: a.activity_type,
+            title: a.title,
+            description: a.description || "",
+            timestamp: a.created_at || new Date().toISOString()
+          }));
+        }
       }
-    }
-    return sessions;
+    } catch {}
   },
 
-  countTrainedModels() {
-    return this.getAllSessions().reduce((sum, s) => {
-      const history = s?.playground?.training_history;
-      return sum + (Array.isArray(history) ? history.length : (s?.playground?.training_result ? 1 : 0));
-    }, 0);
+  // =============================
+  // Sync from APIs (called on page mount)
+  // =============================
+
+  async syncDatasetSession(datasetId) {
+    if (!datasetId) return;
+    try {
+      const response = await sessionAPI.get(datasetId);
+      if (response && response.data) {
+        const session = this._getSession(datasetId);
+        for (const key of ["target_column", "problem_type", "preprocess_config"]) {
+          if (response.data[key] !== undefined && response.data[key] !== null) {
+            session[key] = response.data[key];
+          }
+        }
+      }
+    } catch {}
   },
 
   // =============================
   // Cleanup
   // =============================
 
-  removeMLConfig(datasetId) {
-    this.clearDatasetSession(datasetId);
+  clearDataset(datasetId) {
+    if (!datasetId) return;
+    delete this._sessionCache[datasetId];
+    delete this._edaCache?.[datasetId];
+    delete this._experimentsCache[datasetId];
+    delete this._comparisonCache[datasetId];
+    delete this._activitiesCache[datasetId];
+    if (this._aiCache) {
+      Object.keys(this._aiCache).forEach(key => {
+        if (key.startsWith(`${datasetId}_`)) delete this._aiCache[key];
+      });
+    }
+    experimentAPI.delete(datasetId).catch(() => {});
+    comparisonAPI.delete(datasetId).catch(() => {});
+    activityAPI.delete(datasetId).catch(() => {});
+    sessionAPI.delete(datasetId).catch(() => {});
   },
 
   clearDatasetCache(datasetId) {
-    this.clearDatasetSession(datasetId);
+    if (!datasetId) return;
+    delete this._sessionCache[datasetId];
+    delete this._edaCache?.[datasetId];
+    delete this._experimentsCache[datasetId];
+    delete this._comparisonCache[datasetId];
+    delete this._activitiesCache[datasetId];
   },
 
-  clearAll() {
-    Object.values(STORAGE_KEYS).forEach(key => localStorage.removeItem(key));
+  cleanupObsoleteKeys() {
     for (let i = localStorage.length - 1; i >= 0; i--) {
       const key = localStorage.key(i);
-      if (key && (key.startsWith(SESSION_PREFIX) || key.startsWith(META_PREFIX))) {
+      if (key && (
+        key.startsWith("session_") ||
+        key.startsWith("session_meta_") ||
+        key.startsWith("session_exp_") ||
+        key === "column_types" ||
+        key === "preview_data" ||
+        key === "file_name"
+      )) {
         localStorage.removeItem(key);
       }
     }
-  },
-
-  clearDataset() {
-    const currentId = this.getDatasetId();
-    if (currentId) {
-      this.clearDatasetSession(currentId);
-    }
-    localStorage.removeItem(STORAGE_KEYS.DATASET_ID);
-    localStorage.removeItem(STORAGE_KEYS.COLUMN_TYPES);
-    localStorage.removeItem(STORAGE_KEYS.FILE_NAME);
-    localStorage.removeItem(STORAGE_KEYS.PREVIEW_DATA);
   }
 };
 

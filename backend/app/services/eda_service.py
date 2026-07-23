@@ -1,6 +1,10 @@
+import gc
+import math
+
 import pandas as pd
 import numpy as np
-import math
+
+from app.config import Config
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from app.services.cache_service import dataset_cache
@@ -15,7 +19,6 @@ from sklearn.preprocessing import OneHotEncoder, StandardScaler
 from imblearn.over_sampling import SMOTE
 from imblearn.pipeline import Pipeline as ImbPipeline
 from sklearn.preprocessing import FunctionTransformer
-import numpy as np
 
 # ===============================
 # 🔥 LOAD DATASET (CACHED)
@@ -121,6 +124,7 @@ def compute_numerical_analysis(df):
     numerical_cols, _, _ = detect_column_types(df)
 
     result = []
+    histogram_limit = Config.MAX_NUMERICAL_COLS_HISTOGRAM
 
     for col in numerical_cols:
         series = df[col].dropna()
@@ -128,21 +132,24 @@ def compute_numerical_analysis(df):
         if len(series) == 0:
             continue
 
-        counts, bins = np.histogram(series, bins=20)
-
-        result.append({
+        entry = {
             "column": str(col),
             "mean": safe_value(round(series.mean(), 2)),
             "median": safe_value(round(series.median(), 2)),
             "std": safe_value(round(series.std(), 2)),
             "min": safe_value(round(series.min(), 2)),
             "max": safe_value(round(series.max(), 2)),
-            "skew": safe_value(round(series.skew(), 2)),
-            "histogram": {
+            "skew": safe_value(round(series.skew(), 2))
+        }
+
+        if len(result) < histogram_limit:
+            counts, bins = np.histogram(series, bins=20)
+            entry["histogram"] = {
                 "bins": [safe_value(float(x)) for x in bins],
                 "counts": [int(x) for x in counts]
             }
-        })
+
+        result.append(entry)
 
     return result
 
@@ -211,12 +218,25 @@ def get_column_types(df):
 # ===============================
 def compute_correlation_matrix(df, method="pearson"):
     numerical_cols, _, _ = detect_column_types(df)
+
+    if len(numerical_cols) > Config.MAX_NUMERICAL_COLS_CORRELATION:
+        return {
+            "columns": [],
+            "matrix": [],
+            "skipped": True,
+            "warning": (
+                f"Correlation matrix skipped: {len(numerical_cols)} numerical columns "
+                f"exceeds limit of {Config.MAX_NUMERICAL_COLS_CORRELATION}."
+            )
+        }
+
     numeric_df = df[numerical_cols]
 
     if numeric_df.shape[1] < 2:
         return {"columns": [], "matrix": []}
 
     corr = numeric_df.corr(method=method).fillna(0)
+    del numeric_df
 
     return {
         "columns": list(corr.columns),
@@ -229,40 +249,43 @@ def compute_correlation_matrix(df, method="pearson"):
 # 🤖 FEATURE IMPORTANCE
 # ===============================
 def compute_feature_importance(df, target_column):
-    """
-    Compute feature importance using Random Forest.
-    
-    Args:
-        df: DataFrame to analyze
-        target_column: Target column for prediction
-        
-    Returns:
-        List of features sorted by importance
-    """
     try:
         X, y, encoders = preprocess_data(df, target_column, exclude_high_cardinality=True)
     except ValueError as e:
         return {"error": str(e)}
-    
-    # Choose model based on target cardinality (classification or regression)
+
+    del df
+
     if len(set(y)) <= 10:
         model = RandomForestClassifier(n_estimators=100, random_state=42)
+        problem_type = "classification"
+        model_used = "RandomForestClassifier"
     else:
         model = RandomForestRegressor(n_estimators=100, random_state=42)
-    
+        problem_type = "regression"
+        model_used = "RandomForestRegressor"
+
     model.fit(X, y)
     importances = model.feature_importances_
-    
-    result = [
+
+    importance = [
         {
             "feature": X.columns[i],
             "importance": float(round(importances[i], 4))
         }
         for i in range(len(X.columns))
     ]
-    
-    result.sort(key=lambda x: x["importance"], reverse=True)
-    return result
+
+    importance.sort(key=lambda x: x["importance"], reverse=True)
+
+    del X, y, model, encoders
+    gc.collect()
+
+    return {
+        "importance": importance,
+        "problem_type": problem_type,
+        "model_used": model_used
+    }
 
 
 # ===============================
@@ -434,7 +457,10 @@ def build_preprocessing_pipeline(
     # -------------------------
     cat_pipeline = Pipeline([
         ("imputer", SimpleImputer(strategy=cat_impute)),
-        ("encoder", OneHotEncoder(handle_unknown="ignore"))
+        ("encoder", OneHotEncoder(
+            handle_unknown="ignore",
+            max_categories=Config.MAX_CATEGORICAL_CARDINALITY
+        ))
     ])
 
     # -------------------------
@@ -470,35 +496,39 @@ def train_model(df, target_column, algorithm, params, preprocess_config=None):
     imbalance = preprocess_config.get("imbalance", "none")
     target_transform = preprocess_config.get("target_transform", "none")
 
+    X = y = preprocessor = X_train = X_test = y_train = y_test = model = pipeline = None
     try:
         X, y, preprocessor = build_preprocessing_pipeline(
-        df,
-        target_column,
-        algorithm,
-        num_impute,
-        cat_impute,
-        scaling,
-        preprocess_config
-    )
+            df,
+            target_column,
+            algorithm,
+            num_impute,
+            cat_impute,
+            scaling,
+            preprocess_config
+        )
     except Exception as e:
         return {"error": str(e)}
-    
+
+    del df
+
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42
     )
-    import numpy as np
 
     if target_transform == "log":
         y_train = np.log1p(y_train)
         y_test = np.log1p(y_test)
-    
-    # Model selection based on algorithm
+
     try:
         model = _create_model(algorithm, params)
     except ValueError as e:
         return {"error": str(e)}
-    
+
     if imbalance == "smote" and algorithm in ["linear", "tree_reg", "rf_reg"]:
+        imbalance = "none"
+
+    if imbalance == "smote" and len(X) > Config.MAX_DATASET_ROWS_SMOTE:
         imbalance = "none"
 
     if imbalance == "smote":
@@ -506,23 +536,26 @@ def train_model(df, target_column, algorithm, params, preprocess_config=None):
             ("preprocessor", preprocessor),
             ("smote", SMOTE()),
             ("model", model)
-            ])
+        ])
     else:
         pipeline = Pipeline([
             ("preprocessor", preprocessor),
             ("model", model)
-            ])
+        ])
+
+    del X
 
     pipeline.fit(X_train, y_train)
     preds = pipeline.predict(X_test)
+    del X_train, X_test
+
     if target_transform == "log":
         preds = np.expm1(preds)
         y_test = np.expm1(y_test)
-    
-    # Determine if classification or regression
+
     is_classification = len(set(y)) <= 10
-    
-    # Calculate metrics
+    del y
+
     if is_classification:
         metrics = {
             "accuracy": round(float(accuracy_score(y_test, preds)), 4),
@@ -531,13 +564,14 @@ def train_model(df, target_column, algorithm, params, preprocess_config=None):
             "f1": round(float(f1_score(y_test, preds, zero_division=0)), 4),
         }
     else:
-        mse = mean_squared_error(y_test, preds)
-        rmse = np.sqrt(mse)
         metrics = {
             "r2": round(float(r2_score(y_test, preds)), 4),
             "rmse": round(float(np.sqrt(mean_squared_error(y_test, preds))), 4)
         }
-    
+
+    del y_test, preds, pipeline, model, preprocessor
+    gc.collect()
+
     return {"metrics": metrics}
 
 
@@ -631,9 +665,6 @@ def compare_models(df, target_column, problem_type, preprocess_config=None):
     if preprocess_config is None:
         preprocess_config = {}
 
-    # -------------------------
-    # Preprocessing
-    # -------------------------
     X, y, preprocessor = build_preprocessing_pipeline(
         df,
         target_column,
@@ -641,18 +672,15 @@ def compare_models(df, target_column, problem_type, preprocess_config=None):
         preprocess_config=preprocess_config
     )
 
-    # -------------------------
-    # Get models
-    # -------------------------
+    del df
+
     model_configs = get_model_configs(problem_type)
 
     scoring = "f1_weighted" if problem_type == "classification" else "r2"
 
     results = []
+    cv_folds = min(5, Config.MAX_CV_FOLDS)
 
-    # -------------------------
-    # Model loop (FIXED)
-    # -------------------------
     for name, model_list in model_configs.items():
         best_score = -1
         best_std = 0
@@ -668,7 +696,7 @@ def compare_models(df, target_column, problem_type, preprocess_config=None):
                 pipeline,
                 X,
                 y,
-                cv=5,
+                cv=cv_folds,
                 scoring=scoring
             )
 
@@ -686,13 +714,12 @@ def compare_models(df, target_column, problem_type, preprocess_config=None):
             "params": best_params
         })
 
-    # -------------------------
-    # Sort
-    # -------------------------
+    del X, y, preprocessor, model_configs
+    gc.collect()
+
     results = sorted(results, key=lambda x: x["score"], reverse=True)
 
     insights = generate_insights(results, problem_type, preprocess_config)
-
     recommendation = generate_recommendation(results, problem_type)
 
     return {

@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useNotification } from "../../contexts/NotificationContext";
 import {
@@ -11,10 +11,13 @@ import {
   BookOpen,
   HelpCircle,
   Plus,
-  BrushCleaning
+  Wand2,
+  X,
 } from "lucide-react";
 import Logo from "../../assets/Logo";
-import { storageUtils } from "../../utils/storageUtils"; // ← Now used by handleNav
+import { storageUtils } from "../../utils/storageUtils";
+import { resetCurrentSession } from "../../utils/sessionReset";
+import { useSession } from "../../contexts/SessionContext";
 
 // ─── NAV ITEMS ────────────────────────────────────────────────────────────────
 // To change a route, edit the `path` field below.
@@ -42,7 +45,7 @@ const NAV_ITEMS = [
   {
     id: "preprocess",
     label: "PreProcessing",
-    icon: BrushCleaning,
+    icon: Wand2,
     path: "/preprocess",            // ← EDIT: your route here
   },
   {
@@ -83,15 +86,14 @@ const BOTTOM_LINKS = [
   },
 ];
 
-// ─── NEW EXPERIMENT BUTTON ────────────────────────────────────────────────────
-const NEW_EXPERIMENT_PATH = "/new-experiment"; // ← EDIT: your route here
-
 // ─────────────────────────────────────────────────────────────────────────────
 
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
   const { notify } = useNotification();
+  const { clearSession } = useSession();
+  const [showConfirm, setShowConfirm] = useState(false);
 
   const handleNav = (item) => {
   if (item.external) {
@@ -165,13 +167,49 @@ export default function Sidebar() {
       {/* ── New Experiment CTA ── */}
       <div className="px-0.5 mb-2.5">
         <button
-          onClick={() => navigate(NEW_EXPERIMENT_PATH)}
-          className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[.98] text-white text-[13px] font-semibold rounded-[10px] shadow-[0_2px_8px_rgba(37,99,235,0.30)] hover:shadow-[0_4px_14px_rgba(37,99,235,0.38)] transition-all duration-150 cursor-pointer border-none"
+          onClick={() => setShowConfirm(true)}
+          className="w-full flex items-center justify-center gap-1.5 py-2.5 bg-blue-600 hover:bg-blue-700 active:scale-[.98] text-white text-[13px] font-semibold rounded-[10px] shadow-[0_2px_8px_rgba(37,99,235,0.30)] hover:shadow-[0_4px_14px rgba(37,99,235,0.38)] transition-all duration-150 cursor-pointer border-none"
         >
           <Plus size={14} strokeWidth={2.5} />
           New Experiment
         </button>
       </div>
+
+      {/* ── Confirmation Dialog ── */}
+      {showConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl max-w-sm w-full mx-4 p-6">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-bold text-gray-900">Start New Experiment</h3>
+              <button onClick={() => setShowConfirm(false)} className="p-1 rounded-lg hover:bg-gray-100 transition-colors cursor-pointer border-none">
+                <X className="w-4 h-4 text-gray-400" />
+              </button>
+            </div>
+            <p className="text-sm text-gray-600 mb-6 leading-relaxed">
+              This will clear your current working session and return you to the Upload page. Unsaved experiment progress will be lost.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setShowConfirm(false)}
+                className="px-4 py-2 text-sm font-medium text-gray-600 bg-gray-100 hover:bg-gray-200 rounded-xl transition-colors cursor-pointer border-none"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  setShowConfirm(false);
+                  resetCurrentSession();
+                  clearSession();
+                  navigate("/upload", { replace: true });
+                }}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors cursor-pointer border-none"
+              >
+                Start New Experiment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Bottom Links ── */}
       <div className="flex flex-col gap-0.5 pt-2 border-t border-[#dde4f5]">

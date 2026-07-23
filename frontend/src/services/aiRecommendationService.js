@@ -55,11 +55,6 @@ const CONTEXT_BUILDERS = {
 };
 
 export async function fetchAiRecommendation(datasetId, page, store, extra = {}) {
-  const cached = store.getAiRecommendation(datasetId, page);
-  if (cached) {
-    return cached;
-  }
-
   const builder = CONTEXT_BUILDERS[page];
   if (!builder) throw new Error(`Unknown AI recommendation page: ${page}`);
 
