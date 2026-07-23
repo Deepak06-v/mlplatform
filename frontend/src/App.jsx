@@ -9,11 +9,22 @@ import Settings from "./pages/Settings";
 import PreprocessingPage from "./pages/PreProcessingPage";
 
 import AppLayout from "./components/AppLayout";
+import ToastContainer from "./components/common/ToastContainer";
+import { useNotification } from "./contexts/NotificationContext";
+import { notificationService } from "./services/notificationService";
+import { useEffect } from "react";
 
 const App = () => {
+  const { notify } = useNotification();
+
+  useEffect(() => {
+    notificationService.init(notify);
+  }, [notify]);
+
   return (
-    <AppLayout>
-      <Routes>
+    <>
+      <AppLayout>
+        <Routes>
 
         {/* Default */}
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
@@ -41,6 +52,8 @@ const App = () => {
 
       </Routes>
     </AppLayout>
+    <ToastContainer />
+  </>
   );
 };
 

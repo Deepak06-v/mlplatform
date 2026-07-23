@@ -11,7 +11,7 @@ import InsightEngine from './InsightEngine';
  * Professional, production-grade ML model comparison interface
  */
 
-function ModelComparisonDashboard({ leaderboard, bestModel, recommendation, problemType, loading }) {
+function ModelComparisonDashboard({ leaderboard, bestModel, recommendation, problemType, loading, aiResult, aiStatus }) {
   if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -54,12 +54,19 @@ function ModelComparisonDashboard({ leaderboard, bestModel, recommendation, prob
             leaderboard={leaderboard}
             recommendation={recommendation}
             problemType={problemType}
+            aiResult={aiResult}
+            aiStatus={aiStatus}
           />
         </div>
 
         {/* Insights (Right column) */}
         <div className="bg-white rounded-xl shadow-md p-6 border border-gray-200">
-          <InsightEngine leaderboard={leaderboard} problemType={problemType} />
+          <InsightEngine
+            leaderboard={leaderboard}
+            problemType={problemType}
+            aiResult={aiResult}
+            aiStatus={aiStatus}
+          />
         </div>
       </div>
 

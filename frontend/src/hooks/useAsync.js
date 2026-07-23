@@ -27,9 +27,14 @@ export const useAsync = (asyncFunction) => {
     [asyncFunction]
   );
 
+  const setData = useCallback((data) => {
+    setState({ status: "success", data, error: null });
+  }, []);
+
   return {
     ...state,
     execute,
+    setData,
     isLoading: state.status === "pending",
     isError: state.status === "error",
     isSuccess: state.status === "success"

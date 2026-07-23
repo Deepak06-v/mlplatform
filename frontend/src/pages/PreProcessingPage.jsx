@@ -1,22 +1,41 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { storageUtils } from "../utils/storageUtils";
+import { useNotification } from "../contexts/NotificationContext";
 
 function PreprocessingPage() {
   const { dataset_id } = useParams();
   const navigate = useNavigate();
+  const { notify } = useNotification();
 
   const [problemType, setProblemType] = useState("");
   const [targetColumn, setTargetColumn] = useState("");
 
-  const [config, setConfig] = useState({
+  // =============================
+  // Preprocessing defaults
+  // =============================
+  const PREPROCESS_DEFAULTS = {
     num_impute: "median",
     cat_impute: "most_frequent",
     scaling: "standard",
     num_transform: "none",
     imbalance: "none",
     target_transform: "none"
+  };
+
+  // =============================
+  // Initialize config from storage
+  // =============================
+  const [config, setConfig] = useState(() => {
+    const stored = dataset_id ? storageUtils.getPreprocessConfig(dataset_id) : {};
+    return { ...PREPROCESS_DEFAULTS, ...stored };
   });
+
+  // Re-read from storage when dataset_id changes
+  useEffect(() => {
+    const stored = storageUtils.getPreprocessConfig(dataset_id);
+    setConfig({ ...PREPROCESS_DEFAULTS, ...stored });
+  }, [dataset_id]);
 
   // =============================
   // Detect target + problem type
@@ -31,7 +50,6 @@ function PreprocessingPage() {
 
     setTargetColumn(target);
 
-    // 🔥 FIX: case-insensitive matching
     const targetInfo = columnTypes.find(
       (col) =>
         col.column.trim().toLowerCase() === target.trim().toLowerCase()
@@ -50,24 +68,27 @@ function PreprocessingPage() {
   }, [dataset_id]);
 
   // =============================
-  // Handle change
+  // Handle change — persist immediately
   // =============================
   const handleChange = (key, value) => {
-    setConfig((prev) => ({
-      ...prev,
-      [key]: value
-    }));
+    setConfig((prev) => {
+      const next = { ...prev, [key]: value };
+      storageUtils.savePreprocessConfig(dataset_id, next);
+      return next;
+    });
   };
 
   // =============================
   // Save & Continue
   // =============================
   const handleContinue = () => {
-    storageUtils.setMLConfig(dataset_id, {
-      target_column: targetColumn,
-      preprocess_config: config
+    storageUtils.savePreprocessConfig(dataset_id, config);
+    storageUtils.addActivity(dataset_id, {
+      type: "preprocess",
+      title: "Preprocessing saved",
+      description: "Configuration saved"
     });
-
+    notify.success("Configuration saved", "Proceeding to model training");
     navigate(`/playground/${dataset_id}`);
   };
 

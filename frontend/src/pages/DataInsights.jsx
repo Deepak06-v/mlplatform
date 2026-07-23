@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useParams } from "react-router-dom";
 
 import OverviewCards from "../components/DataInsights/OverviewCards";
@@ -21,30 +21,60 @@ import ExplainabilityPanel from "../components/DataInsights/Explainability";
 import { edaAPI } from "../../services/api";
 import { storageUtils } from "../utils/storageUtils";
 import { useAsync } from "../hooks/useAsync";
+import { useAiRecommendation } from "../hooks/useAiRecommendation";
+import { useNotification } from "../contexts/NotificationContext";
 
 function DataInsights() {
   const { dataset_id } = useParams();
+  const { notify } = useNotification();
   const [insights, setInsights] = useState([]);
   const [edaData, setEdaData] = useState(null);
   const [targetColumn, setTargetColumn] = useState("");
   const [recommendations, setRecommendations] = useState([]);
   const [targetInfo, setTargetInfo] = useState(null);
   const [modelRecs, setModelRecs] = useState([]);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const edaFromCache = useRef(false);
+  const fiFromCache = useRef(false);
 
   // Fetch EDA data
   const edaAsync = useAsync(() => edaAPI.analyze(dataset_id));
-  
+
   // Fetch feature importance
-  const fiAsync = useAsync(() => 
+  const fiAsync = useAsync(() =>
     targetColumn ? edaAPI.computeFeatureImportance(dataset_id, targetColumn) : Promise.resolve([])
   );
 
-  // Initialize - Load EDA data on mount
+  // Load EDA: cache-first — use cached data if available, otherwise fetch
   useEffect(() => {
-    if (dataset_id) {
-      edaAsync.execute();
+    if (!dataset_id) return;
+
+    const cachedEDA = storageUtils.getEDA(dataset_id);
+    if (cachedEDA) {
+      edaFromCache.current = true;
+      edaAsync.setData(cachedEDA);
+      return;
     }
+
+    edaAsync.execute();
   }, [dataset_id]);
+
+  // Persist EDA to cache after successful fetch (skip if restored from cache)
+  useEffect(() => {
+    if (edaFromCache.current) {
+      edaFromCache.current = false;
+      return;
+    }
+    if (edaAsync.isSuccess && edaAsync.data && dataset_id) {
+      storageUtils.saveEDA(dataset_id, edaAsync.data);
+      storageUtils.addActivity(dataset_id, {
+        type: "eda",
+        title: "EDA completed",
+        description: "Dataset analysis ready"
+      });
+      notify.success("EDA completed", "Dataset analysis ready");
+    }
+  }, [edaAsync.isSuccess, edaAsync.data, dataset_id]);
 
   // Load target column from storage
   useEffect(() => {
@@ -54,12 +84,36 @@ function DataInsights() {
     }
   }, [dataset_id]);
 
-  // Auto-compute feature importance when target column changes
+  // Auto-compute feature importance when target column changes: cache-first
   useEffect(() => {
-    if (targetColumn) {
-      fiAsync.execute();
+    if (!targetColumn || !dataset_id) return;
+
+    const cachedFI = storageUtils.getFeatureImportance(dataset_id, targetColumn);
+    if (cachedFI) {
+      fiFromCache.current = true;
+      fiAsync.setData(cachedFI);
+      return;
     }
-  }, [targetColumn]);
+
+    fiAsync.execute();
+  }, [targetColumn, dataset_id]);
+
+  // Persist feature importance to cache after successful fetch (skip if restored from cache)
+  useEffect(() => {
+    if (fiFromCache.current) {
+      fiFromCache.current = false;
+      return;
+    }
+    if (fiAsync.isSuccess && fiAsync.data && dataset_id && targetColumn) {
+      storageUtils.saveFeatureImportance(dataset_id, targetColumn, fiAsync.data);
+      storageUtils.addActivity(dataset_id, {
+        type: "feature_importance",
+        title: "Feature importance computed",
+        description: `Target: ${targetColumn}`
+      });
+      notify.success("Feature importance computed", "Ready for analysis");
+    }
+  }, [fiAsync.isSuccess, fiAsync.data, dataset_id, targetColumn]);
   
   const data = edaAsync.data?.data || edaAsync.data;
   
@@ -91,6 +145,25 @@ useEffect(() => {
   }
 }, [targetInfo, data]);
 
+  // AI settings: read from session
+  useEffect(() => {
+    if (dataset_id) {
+      const settings = storageUtils.getAiSettings(dataset_id);
+      setAiEnabled(settings.mode === "ai");
+    }
+  }, [dataset_id]);
+
+  // Shared AI hook for all 5 insight sub-sections
+  const insightAi = useAiRecommendation({
+    datasetId: dataset_id,
+    page: "insights",
+    store: storageUtils,
+    enabled: aiEnabled
+  });
+
+  const aiInsightData = insightAi.aiResult?.data;
+  const aiStatus = insightAi.aiStatus;
+
   // Handle target column change
   const handleTargetChange = useCallback((column) => {
     setTargetColumn(column);
@@ -116,7 +189,6 @@ useEffect(() => {
   const featureImportanceData = fiAsync.data?.data || fiAsync.data || [];
 
   const explainInsights = interpretFeatureImportance(featureImportanceData);
-
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -154,21 +226,38 @@ useEffect(() => {
 
         {/* Insights Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
-          <InsightPanel insights={insights} />
+          <InsightPanel
+            insights={insights}
+            aiData={aiInsightData?.insights}
+            aiStatus={aiStatus}
+          />
         </div>
 
         {/* Recommendations Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
-          <RecommendationPanel recommendations={recommendations} />
+          <RecommendationPanel
+            recommendations={recommendations}
+            aiData={aiInsightData?.recommendations}
+            aiStatus={aiStatus}
+          />
         </div>
 
         {/* Target Insights Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
-          <TargetInsights targetInfo={targetInfo} targetColumn={targetColumn} />
+          <TargetInsights
+            targetInfo={targetInfo}
+            targetColumn={targetColumn}
+            aiData={aiInsightData?.target_analysis}
+            aiStatus={aiStatus}
+          />
         </div>
 
         <div className="bg-white rounded-xl shadow-sm p-5">
-        <ModelRecommendations models={modelRecs} />
+        <ModelRecommendations
+          models={modelRecs}
+          aiData={aiInsightData?.model_suggestions}
+          aiStatus={aiStatus}
+        />
         </div>
 
         {/* Feature Importance Section */}
@@ -206,7 +295,11 @@ useEffect(() => {
             <FeatureImportance data={featureImportanceData} />
           )}
 
-          <ExplainabilityPanel insights={explainInsights} />
+          <ExplainabilityPanel
+            insights={explainInsights}
+            aiData={aiInsightData?.explainability}
+            aiStatus={aiStatus}
+          />
         </div>
       </div>
     </div>

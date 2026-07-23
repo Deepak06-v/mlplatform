@@ -1,4 +1,5 @@
 import { Lightbulb, TrendingUp, AlertTriangle, CheckCircle } from 'lucide-react';
+import AiBadge from "../common/AiBadge";
 
 /**
  * Dynamic Insight Engine
@@ -131,22 +132,36 @@ function generateDynamicInsights(leaderboard, problemType) {
   return insights;
 }
 
-function InsightEngine({ leaderboard, problemType }) {
-  const insights = generateDynamicInsights(leaderboard, problemType);
+function InsightEngine({ leaderboard, problemType, aiResult, aiStatus }) {
+  const staticInsights = generateDynamicInsights(leaderboard, problemType);
+  const showAi = aiStatus === "loaded" && aiResult?.data != null;
+  const aiData = aiResult?.data;
 
-  if (insights.length === 0) {
-    return null;
-  }
+  const hasStatic = staticInsights.length > 0;
+  const hasAiSummary = showAi && aiData.summary;
+
+  if (!hasStatic && !hasAiSummary) return null;
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <Lightbulb className="w-5 h-5 text-yellow-500" />
-        <h3 className="text-lg font-bold text-gray-900">Key Insights</h3>
+    <div className={`space-y-3 ${aiStatus === "loading" ? "opacity-60" : ""}`}>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Lightbulb className="w-5 h-5 text-yellow-500" />
+          <h3 className="text-lg font-bold text-gray-900">Key Insights</h3>
+        </div>
+        <AiBadge aiStatus={showAi ? "loaded" : aiStatus} />
       </div>
 
+      {/* AI Summary */}
+      {hasAiSummary && (
+        <div className="p-3 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-900">
+          <p className="font-semibold mb-1">AI Overview</p>
+          <p>{aiData.summary}</p>
+        </div>
+      )}
+
       <div className="space-y-3">
-        {insights.map((insight, idx) => {
+        {staticInsights.map((insight, idx) => {
           const Icon = insight.icon;
           const bgColor = {
             success: 'bg-green-50 border-green-200 border-l-4 border-l-green-500',

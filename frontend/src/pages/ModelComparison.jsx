@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { storageUtils } from "../utils/storageUtils";
 import { edaAPI } from "../../services/api";
 import ModelComparisonDashboard from "../components/ModelComparison/ModelComparisonDashboard";
+import { useAiRecommendation } from "../hooks/useAiRecommendation";
+import { useNotification } from "../contexts/NotificationContext";
 
 function ModelComparison() {
   const datasetId = storageUtils.getDatasetId();
@@ -10,6 +12,8 @@ function ModelComparison() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
+  const [aiEnabled, setAiEnabled] = useState(false);
+  const { notify } = useNotification();
 
   const fetchComparison = async () => {
     try {
@@ -24,9 +28,17 @@ function ModelComparison() {
       );
 
       setData(response.data);
+      storageUtils.saveComparisonResult(datasetId, response.data);
+      storageUtils.addActivity(datasetId, {
+        type: "comparison",
+        title: "Model comparison completed",
+        description: `${response.data?.leaderboard?.length || 0} models compared`
+      });
+      notify.success("Comparison complete", `${response.data?.leaderboard?.length || 0} models evaluated`);
     } catch (err) {
       console.error("Comparison failed:", err);
       setError(err.message || "Failed to compare models");
+      notify.error("Comparison failed", err.message || "Failed to compare models");
     } finally {
       setLoading(false);
     }
@@ -34,8 +46,26 @@ function ModelComparison() {
 
   useEffect(() => {
     if (!datasetId) return;
+
+    // Restore AI settings
+    const settings = storageUtils.getAiSettings(datasetId);
+    setAiEnabled(settings.mode === "ai");
+
+    const cached = storageUtils.getComparisonResult(datasetId);
+    if (cached?.result) {
+      setData(cached.result);
+      return;
+    }
+
     fetchComparison();
   }, [datasetId]);
+
+  const comparisonAi = useAiRecommendation({
+    datasetId,
+    page: "comparison",
+    store: storageUtils,
+    enabled: aiEnabled
+  });
 
   if (!datasetId) {
     return (
@@ -70,6 +100,8 @@ function ModelComparison() {
             recommendation={data.recommendation}
             problemType={mlConfig.problem_type}
             loading={loading}
+            aiResult={comparisonAi.aiResult}
+            aiStatus={comparisonAi.aiStatus}
           />
         )}
 

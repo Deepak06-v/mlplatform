@@ -2,8 +2,10 @@ import Papa from "papaparse";
 import { useDropzone } from "react-dropzone";
 import { datasetAPI } from "../../../services/api";
 import { storageUtils } from "../../utils/storageUtils";
+import { useNotification } from "../../contexts/NotificationContext";
 
 function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTypes }) {
+  const { notify } = useNotification();
   const ALLOWED_TYPES = ["text/csv", "application/json"];
   const MAX_SIZE = 5 * 1024 * 1024;
 
@@ -17,11 +19,13 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
     // Validation
     if (!ALLOWED_TYPES.includes(uploadedFile.type)) {
       setError("Invalid file format. Only CSV and JSON supported.");
+      notify.error("Upload failed", "Invalid file format. Only CSV and JSON supported.");
       return;
     }
 
     if (uploadedFile.size > MAX_SIZE) {
       setError(`File too large. Maximum size: ${(MAX_SIZE / 1024 / 1024).toFixed(1)} MB`);
+      notify.error("Upload failed", `File too large. Maximum size: ${(MAX_SIZE / 1024 / 1024).toFixed(1)} MB`);
       return;
     }
 
@@ -34,8 +38,18 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
       const columnTypes = result?.data?.column_types;
 
       if (datasetId) {
+        const oldId = storageUtils.getDatasetId();
+        if (oldId && oldId !== datasetId) {
+          storageUtils.clearDatasetCache(oldId);
+        }
         setDatasetId(datasetId);
         storageUtils.setDatasetId(datasetId);
+        storageUtils.addActivity(datasetId, {
+          type: "upload",
+          title: "Dataset uploaded",
+          description: `${uploadedFile.name} uploaded`
+        });
+        notify.success("Upload successful", `${uploadedFile.name} uploaded`);
       }
 
       if (columnTypes) {
@@ -89,6 +103,7 @@ function UploadBox({ file, setFile, setData, setError, setDatasetId, setColumnTy
     } catch (err) {
       console.error("[Upload Error]", err);
       setError(err.message || "Upload failed. Please try again.");
+      notify.error("Upload failed", err.message || "Please try again.");
     }
   };
 

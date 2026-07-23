@@ -1,14 +1,20 @@
-function ExplainabilityPanel({ insights }) {
-  if (!insights || insights.length === 0) return null
+import AiBadge from "../common/AiBadge";
+
+function ExplainabilityPanel({ insights, aiData, aiStatus }) {
+  const showAi = aiStatus === "loaded" && Array.isArray(aiData) && aiData.length > 0;
+  const items = showAi ? aiData : insights;
+
+  if (!items || items.length === 0) return null;
 
   return (
     <div className="mt-8 bg-white p-5 rounded-xl shadow-sm">
-      <h3 className="text-lg font-semibold mb-3">
-        🔍 Model Explainability
-      </h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-lg font-semibold">🔍 Model Explainability</h3>
+        <AiBadge aiStatus={showAi ? "loaded" : aiStatus} />
+      </div>
 
-      <ul className="list-disc pl-5 text-gray-700 space-y-2">
-        {insights.map((item, i) => (
+      <ul className={`list-disc pl-5 text-gray-700 space-y-2 ${aiStatus === "loading" ? "opacity-60" : ""}`}>
+        {items.map((item, i) => (
           <li key={i}>{item}</li>
         ))}
       </ul>

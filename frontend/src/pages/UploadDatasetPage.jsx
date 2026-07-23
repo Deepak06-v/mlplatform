@@ -12,9 +12,11 @@ import { analyzeDataset } from "../utils/analyzeDataset";
 import { getAdvancedRecommendations } from "../utils/getAdvancedRecommendations";
 import { analyzeColumns } from "../utils/analyzeColumns";
 import { storageUtils } from "../utils/storageUtils";
+import { useNotification } from "../contexts/NotificationContext";
 
 function UploadPage() {
   const navigate = useNavigate();
+  const { notify } = useNotification();
   
   const [file, setFile] = useState(null);
   const [data, setData] = useState(null);
@@ -22,6 +24,7 @@ function UploadPage() {
   const [target, setTarget] = useState("");
   const [datasetId, setDatasetId] = useState(null);
   const [columnTypes, setColumnTypes] = useState({});
+  const [aiMode, setAiMode] = useState(false);
 
   // Restore from storage on mount
   useEffect(() => {
@@ -53,6 +56,21 @@ function UploadPage() {
       setTarget(savedTarget);
     }
   }, []);
+
+  // Restore AI mode from session storage
+  useEffect(() => {
+    if (datasetId) {
+      const settings = storageUtils.getAiSettings(datasetId);
+      setAiMode(settings.mode === "ai");
+    }
+  }, [datasetId]);
+
+  // Persist AI mode when it changes
+  useEffect(() => {
+    if (datasetId) {
+      storageUtils.saveAiSettings(datasetId, { mode: aiMode ? "ai" : "static" });
+    }
+  }, [aiMode, datasetId]);
 
   // Persist file and data preview when they change
   useEffect(() => {
@@ -127,7 +145,33 @@ function UploadPage() {
         setTarget={setTarget}
       />
 
-      <Recommendations recommendations={advancedRecommendations} />
+      {datasetId && (
+        <div className="mt-4 bg-white p-3 rounded-xl shadow flex items-center gap-3">
+          <span className="text-sm font-medium text-gray-700">Recommendation Mode</span>
+          <button
+            onClick={() => setAiMode((prev) => !prev)}
+            className={`relative w-12 h-6 rounded-full transition-colors cursor-pointer ${
+              aiMode ? "bg-indigo-600" : "bg-gray-300"
+            }`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                aiMode ? "translate-x-6" : "translate-x-0"
+              }`}
+            />
+          </button>
+          <span className="text-sm text-gray-500">
+            {aiMode ? "AI" : "Static"}
+          </span>
+        </div>
+      )}
+
+      <Recommendations
+        recommendations={advancedRecommendations}
+        datasetId={datasetId}
+        store={storageUtils}
+        aiEnabled={aiMode}
+      />
 
       <DatasetPreview data={data} />
 

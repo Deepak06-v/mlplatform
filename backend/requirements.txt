@@ -3,3 +3,5 @@ uvicorn
 python-multipart
 pandas
 pymongo
+google-generativeai
+python-dotenv

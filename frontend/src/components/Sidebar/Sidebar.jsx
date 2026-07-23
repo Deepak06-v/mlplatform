@@ -1,5 +1,6 @@
 import React from "react";
 import { useLocation, useNavigate } from "react-router-dom";
+import { useNotification } from "../../contexts/NotificationContext";
 import {
   LayoutDashboard,
   UploadCloud,
@@ -90,6 +91,7 @@ const NEW_EXPERIMENT_PATH = "/new-experiment"; // ← EDIT: your route here
 export default function Sidebar() {
   const location = useLocation();
   const navigate = useNavigate();
+  const { notify } = useNotification();
 
   const handleNav = (item) => {
   if (item.external) {
@@ -104,7 +106,7 @@ export default function Sidebar() {
 
   if (datasetRoutes.includes(item.id)) {
     if (!datasetId) {
-      alert("Please upload a dataset first");
+      notify.warning("No dataset", "Upload a dataset first");
       navigate("/upload");
       return;
     }

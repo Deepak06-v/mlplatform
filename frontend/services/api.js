@@ -84,6 +84,42 @@ export const edaAPI = {
 };
 
 /**
+ * AI Recommendation APIs
+ */
+export const aiAPI = {
+  getRecommendations: (datasetId, page, context = {}) =>
+    api.post("/ai/recommendations", {
+      dataset_id: datasetId,
+      page,
+      context
+    })
+};
+
+/**
+ * Dataset listing
+ */
+export const datasetsAPI = {
+  list: () => api.get("/datasets")
+};
+
+/**
+ * Dashboard APIs
+ */
+export const dashboardAPI = {
+  health: () => api.get("/health")
+};
+
+/**
+ * Dataset Session APIs
+ */
+export const sessionAPI = {
+  get: (datasetId) => api.get(`/session/${datasetId}`),
+  upsert: (datasetId, data) => api.put(`/session/${datasetId}`, data),
+  patch: (datasetId, data) => api.patch(`/session/${datasetId}`, data),
+  delete: (datasetId) => api.delete(`/session/${datasetId}`),
+};
+
+/**
  * Health check
  */
 export const health = () => api.get("/");
