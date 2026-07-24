@@ -1,8 +1,8 @@
-def create_dataset_document(file_id, filename, file_path, file_size_mb, rows, columns, column_names):
+def create_dataset_document(dataset_id, filename, storage_key, file_size_mb, rows, columns, column_names):
     return {
-        "dataset_id": file_id,
+        "dataset_id": dataset_id,
         "filename": filename,
-        "file_path": file_path,
+        "storage_key": storage_key,
         "file_size_mb": file_size_mb,
         "rows": rows,
         "columns": columns,

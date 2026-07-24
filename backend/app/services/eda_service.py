@@ -8,6 +8,7 @@ from app.config import Config
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 from sklearn.preprocessing import LabelEncoder
 from app.services.cache_service import dataset_cache
+from app.storage.provider import storage_provider
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, r2_score, mean_squared_error
 from sklearn.linear_model import LogisticRegression, LinearRegression
@@ -23,13 +24,17 @@ from sklearn.preprocessing import FunctionTransformer
 # ===============================
 # 🔥 LOAD DATASET (CACHED)
 # ===============================
-def load_dataset(file_path):
-    cached_df = dataset_cache.get(file_path)
+def load_dataset(storage_key: str):
+    cached_df = dataset_cache.get(storage_key)
     if cached_df is not None:
         return cached_df
 
-    df = pd.read_csv(file_path)
-    dataset_cache.set(file_path, df)
+    data = storage_provider.download(storage_key)
+    if data is None:
+        raise FileNotFoundError(f"Dataset not found in storage: {storage_key}")
+
+    df = pd.read_csv(data)
+    dataset_cache.set(storage_key, df)
     return df
 
 

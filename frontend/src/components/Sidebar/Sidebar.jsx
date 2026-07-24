@@ -1,6 +1,8 @@
 import React, { useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import { useNotification } from "../../contexts/NotificationContext";
+import { useAuth } from "../../contexts/AuthContext";
+import { useWorkspace } from "../../contexts/WorkspaceContext";
 import {
   LayoutDashboard,
   UploadCloud,
@@ -13,6 +15,10 @@ import {
   Plus,
   Wand2,
   X,
+  LogOut,
+  LogIn,
+  UserPlus,
+  User,
 } from "lucide-react";
 import Logo from "../../assets/Logo";
 import { storageUtils } from "../../utils/storageUtils";
@@ -93,7 +99,10 @@ export default function Sidebar() {
   const navigate = useNavigate();
   const { notify } = useNotification();
   const { clearSession } = useSession();
+  const { currentUser, isAuthenticated, logout } = useAuth();
+  const { resetWorkspace } = useWorkspace();
   const [showConfirm, setShowConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
 
   const handleNav = (item) => {
   if (item.external) {
@@ -196,18 +205,81 @@ export default function Sidebar() {
                 Cancel
               </button>
               <button
-                onClick={() => {
-                  setShowConfirm(false);
-                  resetCurrentSession();
-                  clearSession();
-                  navigate("/upload", { replace: true });
+                onClick={async () => {
+                  setResetting(true);
+                  try {
+                    await resetWorkspace();
+                    resetCurrentSession();
+                    clearSession();
+                    notify.success("Workspace reset", "All data has been cleared.");
+                    navigate("/upload", { replace: true });
+                  } catch {
+                    notify.error("Reset failed", "Could not reset workspace.");
+                  } finally {
+                    setResetting(false);
+                    setShowConfirm(false);
+                  }
                 }}
-                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors cursor-pointer border-none"
+                disabled={resetting}
+                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-xl transition-colors cursor-pointer border-none disabled:opacity-50"
               >
-                Start New Experiment
+                {resetting ? "Resetting..." : "Start New Experiment"}
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {/* ── User Section ── */}
+      {isAuthenticated ? (
+        <div className="px-0.5 mb-2.5">
+          <div className="flex items-center gap-2.5 px-3 py-2 rounded-[10px] bg-blue-50">
+            <div className="w-7 h-7 bg-blue-600 rounded-full flex items-center justify-center flex-shrink-0">
+              <User size={14} className="text-white" />
+            </div>
+            <div className="flex flex-col leading-tight min-w-0">
+              <span className="text-[12.5px] font-semibold text-gray-800 truncate">
+                {currentUser?.username}
+              </span>
+              <span className="text-[9.5px] text-gray-400 truncate">
+                {currentUser?.subscription_plan}
+              </span>
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="px-0.5 mb-2.5">
+          <button
+            onClick={() => navigate("/login")}
+            className="w-full flex items-center justify-center gap-1.5 py-2 bg-blue-600 hover:bg-blue-700 text-white text-[13px] font-semibold rounded-[10px] transition-all duration-150 cursor-pointer border-none"
+          >
+            <LogIn size={14} strokeWidth={2.5} />
+            Sign In
+          </button>
+          <button
+            onClick={() => navigate("/signup")}
+            className="w-full flex items-center justify-center gap-1.5 py-2 mt-1.5 bg-transparent text-blue-600 hover:bg-blue-50 text-[13px] font-semibold rounded-[10px] transition-all duration-150 cursor-pointer border border-blue-200"
+          >
+            <UserPlus size={14} strokeWidth={2.5} />
+            Sign Up
+          </button>
+        </div>
+      )}
+
+      {/* ── Logout Button ── */}
+      {isAuthenticated && (
+        <div className="px-0.5 mb-2.5">
+          <button
+            onClick={() => {
+              logout();
+              navigate("/login", { replace: true });
+              notify.success("Logged out", "You have been logged out successfully.");
+            }}
+            className="w-full flex items-center justify-center gap-1.5 py-2 bg-transparent text-slate-500 hover:bg-red-50 hover:text-red-600 text-[13px] font-medium rounded-[10px] transition-all duration-150 cursor-pointer border border-slate-200 hover:border-red-200"
+          >
+            <LogOut size={14} strokeWidth={1.8} />
+            Logout
+          </button>
         </div>
       )}
 

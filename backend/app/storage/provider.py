@@ -1,27 +1,11 @@
+import io
+import logging
 import os
-import uuid
 
 from app.config import Config
+from app.storage.base import StorageProvider
 
-
-class StorageProvider:
-    def save(self, file, filename: str) -> tuple[str, str, int]:
-        raise NotImplementedError
-
-    def delete(self, file_path: str) -> bool:
-        raise NotImplementedError
-
-    def exists(self, file_path: str) -> bool:
-        raise NotImplementedError
-
-    def size(self, file_path: str) -> int:
-        raise NotImplementedError
-
-    def list_files(self) -> list[dict]:
-        raise NotImplementedError
-
-    def total_size(self) -> int:
-        raise NotImplementedError
+logger = logging.getLogger(__name__)
 
 
 class LocalStorageProvider(StorageProvider):
@@ -29,7 +13,7 @@ class LocalStorageProvider(StorageProvider):
         self.upload_dir = upload_dir or Config.UPLOAD_DIR
         os.makedirs(self.upload_dir, exist_ok=True)
 
-    def save(self, file, filename: str) -> tuple[str, str, int]:
+    def upload(self, file, object_key: str) -> int:
         total = 0
         chunk_size = 8192
         while True:
@@ -43,20 +27,26 @@ class LocalStorageProvider(StorageProvider):
                 )
         file.file.seek(0)
 
-        file_id = str(uuid.uuid4())
-        file_path = os.path.join(self.upload_dir, f"{file_id}_{filename}")
-
+        file_path = os.path.join(self.upload_dir, object_key)
         with open(file_path, "wb") as f:
             while True:
                 chunk = file.file.read(65536)
                 if not chunk:
                     break
                 f.write(chunk)
-
         file.file.seek(0)
-        return file_id, file_path, total
+        return total
 
-    def delete(self, file_path: str) -> bool:
+    def download(self, object_key: str) -> io.BytesIO | None:
+        file_path = os.path.join(self.upload_dir, object_key)
+        try:
+            with open(file_path, "rb") as f:
+                return io.BytesIO(f.read())
+        except FileNotFoundError:
+            return None
+
+    def delete(self, object_key: str) -> bool:
+        file_path = os.path.join(self.upload_dir, object_key)
         try:
             os.remove(file_path)
             return True
@@ -65,34 +55,42 @@ class LocalStorageProvider(StorageProvider):
         except Exception:
             return False
 
-    def exists(self, file_path: str) -> bool:
-        return os.path.isfile(file_path)
+    def exists(self, object_key: str) -> bool:
+        return os.path.isfile(os.path.join(self.upload_dir, object_key))
 
-    def size(self, file_path: str) -> int:
+    def size(self, object_key: str) -> int:
         try:
-            return os.path.getsize(file_path)
+            return os.path.getsize(os.path.join(self.upload_dir, object_key))
         except FileNotFoundError:
             return 0
 
-    def list_files(self) -> list[dict]:
+    def list_objects(self) -> list[dict]:
         results = []
         try:
-            if os.path.isdir(self.upload_dir):
-                with os.scandir(self.upload_dir) as entries:
-                    for entry in entries:
-                        if entry.is_file():
-                            results.append({
-                                "name": entry.name,
-                                "path": entry.path,
-                                "size_bytes": entry.stat().st_size,
-                                "modified_at": entry.stat().st_mtime,
-                            })
+            with os.scandir(self.upload_dir) as entries:
+                for entry in entries:
+                    if entry.is_file():
+                        results.append({
+                            "key": entry.name,
+                            "size_bytes": entry.stat().st_size,
+                            "last_modified": entry.stat().st_mtime,
+                        })
         except Exception:
             pass
         return results
 
-    def total_size(self) -> int:
-        return sum(f["size_bytes"] for f in self.list_files())
+    def get_url(self, object_key: str) -> str:
+        return os.path.join(self.upload_dir, object_key)
 
 
-storage_provider = LocalStorageProvider()
+def create_storage_provider() -> StorageProvider:
+    provider_name = Config.STORAGE_PROVIDER
+    if provider_name == "appwrite":
+        from app.storage.appwrite import AppwriteStorageProvider
+        logger.info("Using Appwrite cloud storage provider")
+        return AppwriteStorageProvider()
+    logger.info("Using local storage provider (uploads/)")
+    return LocalStorageProvider()
+
+
+storage_provider = create_storage_provider()

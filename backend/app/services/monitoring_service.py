@@ -93,10 +93,10 @@ def memory_status():
 # ---------------------------------------------------------------------------
 
 def _detailed_storage_stats():
-    all_files = storage_provider.list_files()
-    total_files = len(all_files)
-    total_bytes = sum(f["size_bytes"] for f in all_files)
-    largest = max(all_files, key=lambda f: f["size_bytes"]) if all_files else None
+    all_objects = storage_provider.list_objects()
+    total_files = len(all_objects)
+    total_bytes = sum(o.get("size_bytes", 0) for o in all_objects)
+    largest = max(all_objects, key=lambda o: o.get("size_bytes", 0)) if all_objects else None
 
     datasets = list(dataset_collection.find({}, {
         "_id": 0, "dataset_id": 1, "file_size_mb": 1,
@@ -110,7 +110,7 @@ def _detailed_storage_stats():
         "total_size_bytes": total_bytes,
         "total_size_mb": round(total_bytes / 1024 / 1024, 2),
         "largest_file_mb": round(largest["size_bytes"] / 1024 / 1024, 2) if largest else 0,
-        "largest_file_name": largest["name"] if largest else None,
+        "largest_file_name": largest.get("key") if largest else None,
         "average_file_size_mb": round(
             (total_bytes / total_files) / 1024 / 1024, 2
         ) if total_files > 0 else 0,

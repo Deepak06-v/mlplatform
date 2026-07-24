@@ -1,14 +1,10 @@
-"""
-AI Recommendation Routes
-Provides a single endpoint for all AI-powered recommendations.
-Always returns immediately — never blocks the client.
-"""
-
 import logging
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 
+from app.auth.dependencies import get_current_user
 from app.services.ai_service import ai_service
+from app.utils.workspace_helpers import verify_dataset_ownership
 
 logger = logging.getLogger(__name__)
 
@@ -22,22 +18,16 @@ class AIRecommendationRequest(BaseModel):
 
 
 @router.post("/recommendations", tags=["AI Recommendations"])
-def get_ai_recommendations(request: AIRecommendationRequest):
-    """
-    Get AI-powered recommendations for any page.
-    
-    Args:
-        dataset_id: Identifies the dataset
-        page: Which page needs recommendations
-        context: Structured data describing the current page state
-        
-    Returns:
-        Dict with status, data, metadata, and cache info
-    """
+def get_ai_recommendations(
+    request: AIRecommendationRequest,
+    current_user: dict = Depends(get_current_user),
+):
     logger.info(
         "AI recommendation requested: page=%s dataset=%s",
         request.page, request.dataset_id
     )
+
+    verify_dataset_ownership(request.dataset_id, current_user["_id"])
 
     result = ai_service.get_recommendation(
         page=request.page,

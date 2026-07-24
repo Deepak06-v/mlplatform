@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
+from app.auth.dependencies import get_current_user
 from app.utils.dataset_helpers import (
     load_dataset_df,
     validate_target_column_in_dataset
@@ -19,6 +20,7 @@ from app.utils.validators import (
     validate_params
 )
 from app.utils.response import APIResponse
+from app.utils.workspace_helpers import verify_dataset_ownership
 from app.services.eda_service import (
     compute_overview,
     compute_missing_by_column,
@@ -34,10 +36,6 @@ from app.services.eda_service import compare_models
 
 router = APIRouter()
 
-
-# ===============================
-# REQUEST MODELS
-# ===============================
 
 class EDARequest(BaseModel):
     dataset_id: str = Field(..., description="Dataset identifier")
@@ -61,17 +59,11 @@ class CompareModelsRequest(BaseModel):
     problem_type: str = Field(..., description="classification or regression")
     preprocess_config: dict = Field(default_factory=dict)
 
-# ===============================
-# ENDPOINTS
-# ===============================
 
 @router.post("/analyze", tags=["Exploratory Data Analysis"])
-def analyze_data(request: EDARequest):
-    """
-    Comprehensive dataset analysis including statistics, distributions, and correlations.
-    Returns cached result from MongoDB if available; computes and caches on first request.
-    """
+def analyze_data(request: EDARequest, current_user: dict = Depends(get_current_user)):
     try:
+        verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
 
         cached = get_cached_eda(request.dataset_id)
@@ -99,19 +91,15 @@ def analyze_data(request: EDARequest):
 
 
 @router.post("/feature-importance", tags=["Feature Analysis"])
-def feature_importance(request: FeatureImportanceRequest):
-    """
-    Compute feature importance using Random Forest.
-    Caching strategy: MongoDB -> compute -> store.
-    """
+def feature_importance(request: FeatureImportanceRequest, current_user: dict = Depends(get_current_user)):
     try:
+        verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
 
         df = load_dataset_df(request.dataset_id)
         validate_target_column_in_dataset(df, request.target_column)
 
-        # Quick problem type detection for cache key (avoids full computation on cache hit)
         y_unique = df[request.target_column].nunique() or 0
         if y_unique <= 10:
             problem_type = "classification"
@@ -138,19 +126,17 @@ def feature_importance(request: FeatureImportanceRequest):
 
 
 @router.post("/train-model", tags=["Model Training"])
-def train_model_api(request: TrainRequest):
-    """
-    Train machine learning model with specified algorithm.
-    """
+def train_model_api(request: TrainRequest, current_user: dict = Depends(get_current_user)):
     try:
+        verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
         validate_algorithm(request.algorithm)
         validate_params(request.params)
-        
+
         df = load_dataset_df(request.dataset_id)
         validate_target_column_in_dataset(df, request.target_column)
-        
+
         result = train_model(
             df,
             request.target_column,
@@ -158,21 +144,20 @@ def train_model_api(request: TrainRequest):
             request.params,
             request.preprocess_config
         )
-        
+
         if "error" in result:
             APIResponse.validation_error(result["error"])
-        
+
         return APIResponse.success(clean_json(result))
-    
+
     except Exception as e:
         APIResponse.server_error(f"Model training failed: {str(e)}", exception=e)
 
+
 @router.post("/compare-models", tags=["Model Comparison"])
-def compare_models_api(request: CompareModelsRequest):
-    """
-    Compare multiple ML models using cross-validation.
-    """
+def compare_models_api(request: CompareModelsRequest, current_user: dict = Depends(get_current_user)):
     try:
+        verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
 

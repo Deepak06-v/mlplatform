@@ -6,17 +6,23 @@ from dotenv import load_dotenv
 
 # Must call load_dotenv() before any app imports so Config sees .env values
 load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), "..", ".env"))
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import Config
+from app.auth import router as auth_router
+from app.workspace import router as workspace_router
 from app.routes import dataset, eda, ai, session, experiment, comparison, activity, monitoring, settings
 from app.utils.db import client as mongo_client
 from app.utils.db import dataset_collection
 from app.utils.response import APIResponse
 from app.utils.structured_log import log_event
+from fastapi import Depends
+from app.auth.dependencies import get_current_user
+from app.workspace.service import get_user_workspace
 
 
 SENSITIVE_KEYS = {"api_key", "api-key", "apikey", "secret", "password", "token", "key"}
@@ -136,8 +142,10 @@ async def startup():
     logger.info("AI cache initialized — max_entries=%d ttl=%ds", _in_memory_cache.max_size, _in_memory_cache.ttl)
 
     from app.storage.provider import storage_provider
-    os.makedirs(storage_provider.upload_dir, exist_ok=True)
-    logger.info("Upload directory verified — path=%s", storage_provider.upload_dir)
+    logger.info("Storage provider: %s", type(storage_provider).__name__)
+    if hasattr(storage_provider, "upload_dir"):
+        os.makedirs(storage_provider.upload_dir, exist_ok=True)
+        logger.info("Upload directory verified — path=%s", storage_provider.upload_dir)
 
     logger.info("Startup complete — %s mode", Config.SERVER_MODE)
 
@@ -171,6 +179,8 @@ async def shutdown():
 # Routes
 # ---------------------------------------------------------------------------
 
+app.include_router(auth_router.router, prefix="/auth", tags=["Authentication"])
+app.include_router(workspace_router.router, prefix="/workspace", tags=["Workspace"])
 app.include_router(dataset.router, prefix="/dataset", tags=["Dataset Management"])
 app.include_router(eda.router, prefix="/eda", tags=["EDA & ML"])
 app.include_router(ai.router, prefix="/ai", tags=["AI Recommendations"])
@@ -207,9 +217,15 @@ def root():
 
 
 @app.get("/datasets", tags=["Dataset Management"])
-def list_datasets():
+def list_datasets(current_user: dict = Depends(get_current_user)):
     try:
-        datasets = list(dataset_collection.find({}, {"_id": 0}))
+        workspace = get_user_workspace(current_user["_id"])
+        if not workspace:
+            return APIResponse.success([], "No workspace found")
+        datasets = list(dataset_collection.find(
+            {"workspace_id": workspace["workspace_id"]},
+            {"_id": 0}
+        ))
         return APIResponse.success(datasets, "Datasets retrieved")
     except Exception as e:
         APIResponse.server_error(f"Failed to list datasets: {str(e)}")

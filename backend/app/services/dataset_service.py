@@ -1,13 +1,18 @@
 import pandas as pd
-from datetime import datetime
-from app.utils.db import db
+import io
+from datetime import datetime, timezone
+from app.utils.db import db, dataset_collection
 from app.services.eda_service import detect_column_types
 from app.storage.provider import storage_provider
+from app.workspace.service import set_workspace_dataset
 
 
-def process_and_store_dataset(file_id, file_path, filename):
-    """Process uploaded CSV and store metadata with column type detection."""
-    df = pd.read_csv(file_path)
+def process_and_store_dataset(storage_key, filename, user_id=None, workspace_id=None):
+    data = storage_provider.download(storage_key)
+    if data is None:
+        raise FileNotFoundError(f"Dataset not found in storage: {storage_key}")
+
+    df = pd.read_csv(data)
 
     for col in df.columns:
         if df[col].dtype == "object":
@@ -29,13 +34,18 @@ def process_and_store_dataset(file_id, file_path, filename):
             "type": col_type
         })
 
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
+    file_size = storage_provider.size(storage_key)
+
+    dataset_id = storage_key.split("_", 1)[0]
 
     document = {
-        "dataset_id": file_id,
+        "dataset_id": dataset_id,
         "filename": filename,
-        "file_path": file_path,
-        "file_size_mb": round(storage_provider.size(file_path) / (1024 * 1024), 2),
+        "storage_key": storage_key,
+        "file_size": file_size,
+        "file_size_mb": round(file_size / (1024 * 1024), 2),
+        "content_type": "text/csv",
         "column_types": column_types,
         "columns": list(df.columns),
         "rows": len(df),
@@ -44,10 +54,19 @@ def process_and_store_dataset(file_id, file_path, filename):
         "usage_count": 1,
         "status": "active",
     }
+
+    if user_id:
+        document["user_id"] = user_id
+    if workspace_id:
+        document["workspace_id"] = workspace_id
+
     db.datasets.insert_one(document)
 
+    if workspace_id:
+        set_workspace_dataset(workspace_id, dataset_id)
+
     return {
-        "dataset_id": file_id,
+        "dataset_id": dataset_id,
         "rows": len(df),
         "columns": len(df.columns),
         "columns_list": list(df.columns),

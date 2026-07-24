@@ -46,8 +46,20 @@ class Config:
     CLEANUP_ENABLED = os.getenv("CLEANUP_ENABLED", "false").lower() == "true"
     CLEANUP_DRY_RUN = os.getenv("CLEANUP_DRY_RUN", "true").lower() == "true"
 
-    # Paths
+    # JWT Authentication
+    JWT_SECRET_KEY = os.getenv("JWT_SECRET_KEY", "dev-secret-key-change-in-production-abc123xyz")
+    JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+    JWT_ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_ACCESS_TOKEN_EXPIRE_MINUTES", "60"))
+
+    # Storage
+    STORAGE_PROVIDER = os.getenv("STORAGE_PROVIDER", "local")  # local | appwrite
     UPLOAD_DIR = os.getenv("UPLOAD_DIR", "uploads")
+
+    # Appwrite Storage (used when STORAGE_PROVIDER=appwrite)
+    APPWRITE_ENDPOINT = os.getenv("APPWRITE_ENDPOINT", "")
+    APPWRITE_PROJECT_ID = os.getenv("APPWRITE_PROJECT_ID", "")
+    APPWRITE_API_KEY = os.getenv("APPWRITE_API_KEY", "")
+    APPWRITE_BUCKET_ID = os.getenv("APPWRITE_BUCKET_ID", "")
 
     @staticmethod
     def is_production():

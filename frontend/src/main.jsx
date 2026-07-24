@@ -4,13 +4,19 @@ import { BrowserRouter } from "react-router-dom";
 import App from "./App.jsx";
 import { NotificationProvider } from "./contexts/NotificationContext";
 import { SessionProvider } from "./contexts/SessionContext";
+import { AuthProvider } from "./contexts/AuthContext";
+import { WorkspaceProvider } from "./contexts/WorkspaceContext";
 
 createRoot(document.getElementById("root")).render(
   <BrowserRouter>
-    <NotificationProvider>
-      <SessionProvider>
-        <App />
-      </SessionProvider>
-    </NotificationProvider>
+    <AuthProvider>
+      <NotificationProvider>
+        <WorkspaceProvider>
+          <SessionProvider>
+            <App />
+          </SessionProvider>
+        </WorkspaceProvider>
+      </NotificationProvider>
+    </AuthProvider>
   </BrowserRouter>
 );

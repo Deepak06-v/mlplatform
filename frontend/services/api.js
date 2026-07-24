@@ -5,7 +5,7 @@ const API_BASE_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 /**
  * Centralized API client with all endpoints
  */
-const api = axios.create({
+export const api = axios.create({
   baseURL: API_BASE_URL,
   headers: {
     "Content-Type": "application/json"
@@ -107,6 +107,14 @@ export const aiAPI = {
  */
 export const datasetsAPI = {
   list: () => api.get("/datasets")
+};
+
+/**
+ * Workspace APIs
+ */
+export const workspaceAPI = {
+  current: () => api.get("/workspace/current"),
+  reset: () => api.post("/workspace/reset"),
 };
 
 /**

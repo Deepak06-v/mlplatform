@@ -1,8 +1,9 @@
 import logging
 from datetime import datetime
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.auth.dependencies import get_current_user
 from app.utils.db import settings_collection
 from app.utils.response import APIResponse
 
@@ -12,8 +13,9 @@ router = APIRouter(prefix="/settings", tags=["Settings"])
 
 
 @router.get("")
-def get_settings():
-    doc = settings_collection.find_one({"_id": "user_prefs"})
+def get_settings(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["_id"]
+    doc = settings_collection.find_one({"_id": f"user_prefs_{user_id}"})
     if not doc:
         return APIResponse.success({
             "ai_provider": "Auto",
@@ -49,22 +51,24 @@ def get_settings():
 
 
 @router.put("")
-def update_settings(payload: dict):
+def update_settings(payload: dict, current_user: dict = Depends(get_current_user)):
+    user_id = current_user["_id"]
     payload.pop("_id", None)
     payload["updated_at"] = datetime.utcnow()
     if "version" not in payload:
         payload["version"] = 1
     settings_collection.update_one(
-        {"_id": "user_prefs"},
+        {"_id": f"user_prefs_{user_id}"},
         {"$set": payload},
         upsert=True,
     )
-    doc = settings_collection.find_one({"_id": "user_prefs"})
+    doc = settings_collection.find_one({"_id": f"user_prefs_{user_id}"})
     doc.pop("_id", None)
     return APIResponse.success(doc, "Settings updated")
 
 
 @router.post("/reset")
-def reset_settings():
-    settings_collection.delete_one({"_id": "user_prefs"})
+def reset_settings(current_user: dict = Depends(get_current_user)):
+    user_id = current_user["_id"]
+    settings_collection.delete_one({"_id": f"user_prefs_{user_id}"})
     return APIResponse.success({"reset": True}, "Settings reset to defaults")

@@ -78,7 +78,7 @@ def public_config():
         "version": "1.0.0",
         "build": git_hash,
         "max_upload_size_mb": Config.MAX_UPLOAD_SIZE_MB,
-        "upload_dir": Config.UPLOAD_DIR,
+        "storage_provider": Config.STORAGE_PROVIDER,
         "supported_file_types": [".csv", ".json"],
         "default_cv_folds": Config.MAX_CV_FOLDS,
         "cache_ttl_seconds": Config.DATASET_CACHE_TTL_SECONDS,

@@ -14,12 +14,14 @@ import { analyzeColumns } from "../utils/analyzeColumns";
 import { storageUtils } from "../utils/storageUtils";
 import { useNotification } from "../contexts/NotificationContext";
 import { useSession } from "../contexts/SessionContext";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 import { datasetAPI } from "../../services/api";
 
 function UploadPage() {
   const navigate = useNavigate();
   const { notify } = useNotification();
-  const { dataset: sessionDataset, datasetId: globalDatasetId, session, updateSession, clearSession } = useSession();
+  const { dataset: sessionDataset, datasetId: globalDatasetId, session, updateSession } = useSession();
+  const { hasDataset, workspace, loading: workspaceLoading, refetch } = useWorkspace();
   const restored = useRef(false);
 
   const [file, setFile] = useState(null);
@@ -88,29 +90,17 @@ function UploadPage() {
     }).catch(() => {});
   }, [globalDatasetId]);
 
+  // Refetch workspace when dataset changes
+  useEffect(() => {
+    if (datasetId) {
+      refetch();
+    }
+  }, [datasetId, refetch]);
+
   // Persist AI mode
   useEffect(() => {
     storageUtils.saveAiSettings({ mode: aiMode ? "ai" : "static" });
   }, [aiMode, datasetId]);
-
-  const handleReset = useCallback(() => {
-    const id = datasetId;
-    if (id) {
-      storageUtils.clearDataset(id);
-    }
-    updateSession({ target_column: "", problem_type: "", preprocess_config: {} });
-    setFile(null);
-    setData(null);
-    setDatasetId(null);
-    setError("");
-    setColumnTypesInState({});
-    storageUtils._columnTypes = null;
-    storageUtils._fileName = null;
-    storageUtils._previewData = null;
-    storageUtils.setDatasetId("");
-    clearSession();
-    restored.current = false;
-  }, [datasetId, clearSession, updateSession]);
 
   const handleProceed = useCallback(() => {
     if (datasetId && target) {
@@ -133,6 +123,47 @@ function UploadPage() {
     columnAnalysis,
     analysis?.rows
   );
+
+  if (workspaceLoading) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="text-center py-12">
+          <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">Loading workspace...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (hasDataset && !datasetId) {
+    return (
+      <div className="min-h-screen bg-gray-50 p-6">
+        <div className="max-w-lg mx-auto mt-12 text-center">
+          <div className="bg-amber-50 border border-amber-200 rounded-2xl p-8">
+            <h1 className="text-xl font-bold text-amber-800 mb-2">Dataset Already Exists</h1>
+            <p className="text-amber-600 text-sm mb-6">
+              Your workspace already contains a dataset. Free accounts are limited to one dataset at a time.
+            </p>
+            <button
+              onClick={() => navigate("/dashboard")}
+              className="px-6 py-2.5 bg-amber-600 hover:bg-amber-700 text-white text-sm font-semibold rounded-xl transition-colors mr-3"
+            >
+              Go to Dashboard
+            </button>
+            <button
+              onClick={() => {
+                const sidebar = document.querySelector('[data-new-experiment]');
+                if (sidebar) sidebar.click();
+              }}
+              className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              Start New Experiment
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -223,12 +254,6 @@ function UploadPage() {
           Proceed to Data Insights →
         </button>
 
-        <button
-          onClick={handleReset}
-          className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition"
-        >
-          Reset
-        </button>
       </div>
     </div>
   );

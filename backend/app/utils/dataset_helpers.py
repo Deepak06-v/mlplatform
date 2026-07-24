@@ -20,9 +20,13 @@ def get_dataset_or_fail(dataset_id: str) -> dict:
 
 def load_dataset_df(dataset_id: str) -> pd.DataFrame:
     dataset = get_dataset_or_fail(dataset_id)
+    storage_key = dataset.get("storage_key")
+
+    if not storage_key:
+        APIResponse.server_error("Dataset has no storage reference")
 
     try:
-        df = load_dataset(dataset["file_path"])
+        df = load_dataset(storage_key)
 
         db.datasets.update_one(
             {"dataset_id": dataset_id},
@@ -34,7 +38,7 @@ def load_dataset_df(dataset_id: str) -> pd.DataFrame:
 
         return df
     except FileNotFoundError:
-        APIResponse.server_error(f"Dataset file not found: {dataset['file_path']}")
+        APIResponse.server_error(f"Dataset file not found in storage: {storage_key}")
     except Exception as e:
         APIResponse.server_error(f"Failed to load dataset: {str(e)}", exception=e)
 
