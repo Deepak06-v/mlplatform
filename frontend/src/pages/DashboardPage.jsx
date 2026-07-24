@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { datasetsAPI, dashboardAPI } from "../../services/api";
 import { storageUtils } from "../utils/storageUtils";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 
 const ALGORITHM_NAMES = {
   logistic: "Logistic Regression",
@@ -59,72 +60,54 @@ function ActivityIcon({ type }) {
 
 export default function DashboardPage() {
   const navigate = useNavigate();
-  const datasetId = storageUtils.getDatasetId();
+  const { state: wsState, datasetInfo, status: wsStatus } = useWorkspace();
+  const datasetId = useMemo(() => datasetInfo?.dataset_id || storageUtils.getDatasetId(), [datasetInfo]);
 
-  const [datasets, setDatasets] = useState(null);
-  const [healthStatus, setHealthStatus] = useState(null);
   const [loading, setLoading] = useState(true);
 
-  // All application state loaded from backend APIs + in-memory caches
-  const eda = storageUtils.getEDA(datasetId);
-  const trainingResult = storageUtils.getPlaygroundResult(datasetId);
-  const comparison = storageUtils.getComparisonResult(datasetId);
-  const mlConfig = storageUtils.getMLConfig(datasetId);
-  const preprocessConfig = storageUtils.getPreprocessConfig(datasetId);
-  const activities = storageUtils.getActivities(datasetId);
-  const fileName = storageUtils.getFileName();
-
-  // AI copilot summary (from in-memory cache)
-  const aiPages = ["upload", "insights", "playground", "comparison"];
-  const hasAi = aiPages.some(p => storageUtils.getAiRecommendation(datasetId, p)?.status === "completed");
-  const firstAiRecPage = aiPages.find(p => storageUtils.getAiRecommendation(datasetId, p)?.status === "completed");
-  const aiData = firstAiRecPage ? storageUtils.getAiRecommendation(datasetId, firstAiRecPage)?.data : null;
-
-  // Training history (append-only, each training is an experiment)
-  const trainingHistory = datasetId ? storageUtils.getTrainingHistory(datasetId) : [];
+  const eda = wsState?.eda || storageUtils.getEDA(datasetId);
+  const trainingData = wsState?.training || {};
+  const trainingHistory = trainingData.experiments || storageUtils.getTrainingHistory(datasetId) || [];
   const lastExperiment = trainingHistory.length > 0 ? trainingHistory[trainingHistory.length - 1] : null;
+  const comparison = trainingData.comparison || storageUtils.getComparisonResult(datasetId);
+  const mlConfig = storageUtils.getMLConfig(datasetId);
+  const preprocessConfig = wsState?.preprocessing || storageUtils.getPreprocessConfig(datasetId);
+  const fileName = datasetInfo?.filename || storageUtils.getFileName();
 
-  // Pipeline detection
+  const aiInsights = wsState?.ai_insights || {};
+  const hasAi = Object.values(aiInsights).some(v => v?.status === "success");
+  const firstAiPage = Object.entries(aiInsights).find(([, v]) => v?.status === "success")?.[0];
+  const aiData = firstAiPage ? aiInsights[firstAiPage]?.data : null;
+
   const pipeline = {
     upload: !!datasetId,
-    eda: !!eda,
+    eda: !!eda || wsStatus?.eda_computed,
     preprocessing: !!preprocessConfig && Object.keys(preprocessConfig).length > 0,
-    training: trainingHistory.length > 0 || !!trainingResult,
+    training: trainingHistory.length > 0 || wsStatus?.models_trained,
     comparison: !!comparison?.result
   };
   const completedStages = STAGE_LABELS.filter((_, i) => Object.values(pipeline)[i]);
   const currentStageIndex = Object.values(pipeline).findIndex(v => !v);
 
-  // Best model from training history or comparison
-  const bestExperiment = datasetId ? storageUtils.getBestModel(datasetId) : null;
+  const bestExperiment = trainingData.best_model || storageUtils.getBestModel(datasetId);
   const bestMetrics = bestExperiment?.metrics || null;
   const bestAlgorithm = bestExperiment?.algorithm || mlConfig.algorithm || comparison?.best_model || "";
-  const isClassification = (bestExperiment?.problem_type || mlConfig.problem_type) === "classification";
 
-  // Leaderboard from comparison
   const leaderboard = comparison?.leaderboard || comparison?.result?.leaderboard || [];
   const topModels = [...leaderboard].sort((a, b) => (b.score || 0) - (a.score || 0));
-
-  // Model count (from experiments cache)
-  const totalTrained = datasetId ? (trainingHistory.length || 0) : 0;
-
-  // Recent activities (last 10)
-  const recentActivities = [...activities].reverse().slice(0, 10);
-
-  // Latest 3 experiments for Recent Models display
+  const totalTrained = trainingHistory.length || 0;
   const recentModels = [...trainingHistory].reverse().slice(0, 3);
+
+  const [datasets, setDatasets] = useState(null);
+  const [healthStatus, setHealthStatus] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       try {
-        const [dsRes, hRes, sessionRes] = await Promise.allSettled([
+        const [dsRes, hRes] = await Promise.allSettled([
           datasetsAPI.list(),
           dashboardAPI.health(),
-          datasetId ? storageUtils.syncDatasetSession(datasetId) : Promise.resolve(),
-          datasetId ? storageUtils.syncExperiments(datasetId) : Promise.resolve(),
-          datasetId ? storageUtils.syncComparison(datasetId) : Promise.resolve(),
-          datasetId ? storageUtils.syncActivities(datasetId) : Promise.resolve()
         ]);
         if (cancelled) return;
         if (dsRes.status === "fulfilled") setDatasets(dsRes.value?.data || []);
@@ -134,8 +117,14 @@ export default function DashboardPage() {
     }
     load();
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [datasetId]);
+  }, []);
+
+  const activities = storageUtils.getActivities(datasetId);
+  const recentActivities = [...activities].reverse().slice(0, 10);
+  const backendCount = Array.isArray(datasets) ? datasets.length : 0;
+  const hasDataset = !!datasetId;
+  const datasetCount = backendCount > 0 ? backendCount : (hasDataset ? 1 : 0);
+  const isClassification = (bestExperiment?.problem_type || mlConfig.problem_type) === "classification";
 
   if (loading) {
     return (
@@ -148,15 +137,9 @@ export default function DashboardPage() {
     );
   }
 
-  const backendCount = Array.isArray(datasets) ? datasets.length : 0;
-  const hasDataset = !!datasetId && (!!eda || !!trainingResult || !!comparison || !!mlConfig.target_column);
-  const datasetCount = backendCount > 0 ? backendCount : (hasDataset ? 1 : 0);
-
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-6">
-
-        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
@@ -172,13 +155,8 @@ export default function DashboardPage() {
           </div>
         </div>
 
-        {/* Stat Cards */}
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
-          <StatCard
-            label="Total Datasets"
-            value={datasetCount}
-            color="text-blue-600"
-          />
+          <StatCard label="Total Datasets" value={datasetCount} color="text-blue-600" />
           <StatCard
             label="Pipeline Stage"
             value={currentStageIndex < 0 ? "Complete" : STAGE_LABELS[currentStageIndex] || "Start"}
@@ -211,9 +189,7 @@ export default function DashboardPage() {
           />
         </div>
 
-        {/* Pipeline + Health */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          {/* Pipeline Progress */}
           <Section title="Pipeline Progress" className="lg:col-span-2">
             {!hasDataset ? (
               <p className="text-sm text-gray-400 py-4 text-center">Upload a dataset to begin the pipeline.</p>
@@ -242,16 +218,8 @@ export default function DashboardPage() {
                 })}
               </div>
             )}
-            {hasDataset && (
-              <div className="mt-3 text-xs text-gray-400">
-                {currentStageIndex < 0
-                  ? "All stages completed. Run comparison or retrain models."
-                  : `Next: ${STAGE_LABELS[currentStageIndex]} — ${getStageHint(currentStageIndex)}`}
-              </div>
-            )}
           </Section>
 
-          {/* Dataset Health */}
           <Section title="Dataset Health">
             {!eda ? (
               <p className="text-sm text-gray-400 py-4 text-center">Run EDA to see health metrics.</p>
@@ -261,17 +229,13 @@ export default function DashboardPage() {
                 <HealthRow label="Columns" value={eda.overview?.columns} />
                 <HealthRow label="Missing" value={eda.overview?.missing_percentage != null ? `${eda.overview.missing_percentage.toFixed(1)}%` : "—"} warn={eda.overview?.missing_percentage > 5} />
                 <HealthRow label="Duplicates" value={eda.overview?.duplicates ?? "—"} warn={eda.overview?.duplicates > 0} />
-                <HealthRow label="Target" value={mlConfig.target_column || "Not selected"} />
                 <HealthRow label="Problem Type" value={mlConfig.problem_type || "—"} />
-                {eda.column_types && (
-                  <HealthRow label="Features" value={`${eda.column_types.length} total`} />
-                )}
+                {eda.column_types && <HealthRow label="Features" value={`${eda.column_types.length} total`} />}
               </div>
             )}
           </Section>
         </div>
 
-        {/* AI Copilot Summary */}
         <Section title="AI Copilot Summary">
           {!hasDataset ? (
             <p className="text-sm text-gray-400 py-4 text-center">Upload a dataset to see AI recommendations.</p>
@@ -290,7 +254,6 @@ export default function DashboardPage() {
           )}
         </Section>
 
-        {/* Best Model + Leaderboard */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <Section title="Best Model">
             {!bestMetrics ? (
@@ -316,9 +279,6 @@ export default function DashboardPage() {
                     </>
                   )}
                 </div>
-                {bestExperiment?.timestamp && (
-                  <p className="text-xs text-gray-400 pt-1">Trained {formatTime(bestExperiment.timestamp)}</p>
-                )}
               </div>
             )}
           </Section>
@@ -336,21 +296,14 @@ export default function DashboardPage() {
                       }`}>{i + 1}</span>
                       <span className="font-medium text-gray-800">{m.model}</span>
                     </div>
-                    <div className="text-right">
-                      <span className="font-semibold text-gray-900">{(m.score * 100).toFixed(1)}%</span>
-                      <span className="text-xs text-gray-400 ml-1">±{m.std?.toFixed(3) || "—"}</span>
-                    </div>
+                    <span className="font-semibold text-gray-900">{(m.score * 100).toFixed(1)}%</span>
                   </div>
                 ))}
-                {comparison?.timestamp && (
-                  <p className="text-xs text-gray-400 pt-1">Compared {formatTime(comparison.timestamp)}</p>
-                )}
               </div>
             )}
           </Section>
         </div>
 
-        {/* Recent Models */}
         {recentModels.length > 0 && (
           <Section title="Recent Models">
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -373,7 +326,6 @@ export default function DashboardPage() {
           </Section>
         )}
 
-        {/* Recent Activity + Platform Status */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <Section title="Recent Activity" className="lg:col-span-2">
             {recentActivities.length === 0 ? (
@@ -405,39 +357,16 @@ export default function DashboardPage() {
           </Section>
         </div>
 
-        {/* Quick Actions */}
         <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
           <h3 className="text-sm font-semibold text-gray-500 uppercase tracking-wider mb-4">Quick Actions</h3>
           <div className="flex flex-wrap gap-3">
-            <ActionButton
-              label={hasDataset ? "Continue Training" : "Upload Dataset"}
-              onClick={() => navigate(hasDataset ? `/playground/${datasetId}` : "/upload")}
-              primary
-              disabled={hasDataset && !mlConfig.target_column}
-            />
-            <ActionButton
-              label="Upload Dataset"
-              onClick={() => navigate("/upload")}
-              disabled={false}
-            />
-            <ActionButton
-              label="Open Insights"
-              onClick={() => navigate(`/insights/${datasetId}`)}
-              disabled={!hasDataset}
-            />
-            <ActionButton
-              label="Compare Models"
-              onClick={() => navigate(`/comparison/${datasetId}`)}
-              disabled={!hasDataset || trainingHistory.length === 0}
-            />
-            <ActionButton
-              label="Settings"
-              onClick={() => navigate("/settings")}
-              disabled={false}
-            />
+            <ActionButton label={hasDataset ? "Continue Training" : "Upload Dataset"} onClick={() => navigate(hasDataset ? `/playground/${datasetId}` : "/upload")} primary disabled={hasDataset && !mlConfig.target_column} />
+            <ActionButton label="Upload Dataset" onClick={() => navigate("/upload")} disabled={false} />
+            <ActionButton label="Open Insights" onClick={() => navigate(`/insights/${datasetId}`)} disabled={!hasDataset} />
+            <ActionButton label="Compare Models" onClick={() => navigate(`/comparison/${datasetId}`)} disabled={!hasDataset || trainingHistory.length === 0} />
+            <ActionButton label="Settings" onClick={() => navigate("/settings")} disabled={false} />
           </div>
         </div>
-
       </div>
     </div>
   );
@@ -462,14 +391,7 @@ function Metric({ label, value }) {
 }
 
 function StatusRow({ label, status }) {
-  const colorMap = {
-    healthy: "bg-emerald-500",
-    ok: "bg-emerald-500",
-    unhealthy: "bg-red-500",
-    available: "bg-emerald-500",
-    unavailable: "bg-red-500",
-    empty: "bg-gray-300"
-  };
+  const colorMap = { healthy: "bg-emerald-500", ok: "bg-emerald-500", unhealthy: "bg-red-500", available: "bg-emerald-500", unavailable: "bg-red-500", empty: "bg-gray-300" };
   const dot = colorMap[status] || "bg-gray-300";
   return (
     <div className="flex items-center justify-between">
@@ -484,36 +406,11 @@ function StatusRow({ label, status }) {
 
 function ActionButton({ label, onClick, primary, disabled }) {
   if (disabled) {
-    return (
-      <button
-        disabled
-        className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-400 cursor-not-allowed"
-      >
-        {label}
-      </button>
-    );
+    return <button disabled className="px-4 py-2 rounded-lg text-sm font-medium bg-gray-100 text-gray-400 cursor-not-allowed">{label}</button>;
   }
   return (
-    <button
-      onClick={onClick}
-      className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
-        primary
-          ? "bg-blue-600 text-white hover:bg-blue-700 shadow-sm"
-          : "bg-gray-100 text-gray-700 hover:bg-gray-200"
-      }`}
-    >
+    <button onClick={onClick} className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${primary ? "bg-blue-600 text-white hover:bg-blue-700 shadow-sm" : "bg-gray-100 text-gray-700 hover:bg-gray-200"}`}>
       {label}
     </button>
   );
-}
-
-function getStageHint(index) {
-  const hints = [
-    "Upload a CSV dataset to begin.",
-    "Run EDA on the Data Insights page.",
-    "Configure preprocessing options.",
-    "Train a model in the ML Playground.",
-    "Compare models to find the best performer."
-  ];
-  return hints[index] || "";
 }

@@ -24,11 +24,13 @@ import { useAsync } from "../hooks/useAsync";
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
 import { useSession } from "../contexts/SessionContext";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 
 function DataInsights() {
   const { dataset_id } = useParams();
   const { notify } = useNotification();
   const { session: globalSession, updateSession } = useSession();
+  const { state: wsState } = useWorkspace();
   const [insights, setInsights] = useState([]);
   const [edaData, setEdaData] = useState(null);
   const [recommendations, setRecommendations] = useState([]);
@@ -40,62 +42,37 @@ function DataInsights() {
 
   const targetColumn = globalSession?.target_column || "";
 
-  // Fetch EDA data
-  const edaAsync = useAsync(() => edaAPI.analyze(dataset_id));
-
-  // Fetch feature importance
   const fiAsync = useAsync(() =>
     targetColumn ? edaAPI.computeFeatureImportance(dataset_id, targetColumn) : Promise.resolve([])
   );
 
-  // Load EDA: cache-first
+  const cachedEDA = wsState?.eda || storageUtils.getEDA(dataset_id);
+
   useEffect(() => {
     if (!dataset_id) return;
-
-    const cachedEDA = storageUtils.getEDA(dataset_id);
     if (cachedEDA) {
       edaFromCache.current = true;
-      edaAsync.setData(cachedEDA);
+      setEdaData(cachedEDA);
       return;
     }
+    edaAPI.analyze(dataset_id).then(res => {
+      const data = res?.data || res;
+      storageUtils.saveEDA(dataset_id, data);
+      setEdaData(data);
+    }).catch(() => {});
+  }, [dataset_id, cachedEDA]);
 
-    edaAsync.execute();
-  }, [dataset_id]);
-
-  // Persist EDA to cache after successful fetch
-  useEffect(() => {
-    if (edaFromCache.current) {
-      edaFromCache.current = false;
-      return;
-    }
-    if (edaAsync.isSuccess && edaAsync.data && dataset_id) {
-      storageUtils.saveEDA(dataset_id, edaAsync.data);
-      if (!edaAsync.data.from_cache) {
-        storageUtils.addActivity(dataset_id, {
-          type: "eda",
-          title: "EDA completed",
-          description: "Dataset analysis ready"
-        });
-        notify.success("EDA completed", "Dataset analysis ready");
-      }
-    }
-  }, [edaAsync.isSuccess, edaAsync.data, dataset_id]);
-
-  // Auto-compute feature importance when target column changes: cache-first
   useEffect(() => {
     if (!targetColumn || !dataset_id) return;
-
-    const cachedFI = storageUtils.getFeatureImportance(dataset_id, targetColumn);
+    const cachedFI = wsState?.feature_importance || storageUtils.getFeatureImportance(dataset_id, targetColumn);
     if (cachedFI) {
       fiFromCache.current = true;
       fiAsync.setData(cachedFI);
       return;
     }
-
     fiAsync.execute();
-  }, [targetColumn, dataset_id]);
+  }, [targetColumn, dataset_id, wsState?.feature_importance]);
 
-  // Persist feature importance to cache after successful fetch (skip if restored from cache)
   useEffect(() => {
     if (fiFromCache.current) {
       fiFromCache.current = false;
@@ -113,38 +90,37 @@ function DataInsights() {
       }
     }
   }, [fiAsync.isSuccess, fiAsync.data, dataset_id, targetColumn]);
-  
-  const data = edaAsync.data?.data || edaAsync.data;
-  
+
+  const data = edaData?.data || edaData;
+
   useEffect(() => {
-  if (data) {
-    const generated = generateInsights(data, targetColumn);
-    setInsights(generated);
-  }
-}, [data, targetColumn]);
+    if (data) {
+      const generated = generateInsights(data, targetColumn);
+      setInsights(generated);
+    }
+  }, [data, targetColumn]);
 
-useEffect(() => {
-  if (insights.length > 0) {
-    const recs = generateRecommendations(insights);
-    setRecommendations(recs);
-  }
-}, [insights]);
+  useEffect(() => {
+    if (insights.length > 0) {
+      const recs = generateRecommendations(insights);
+      setRecommendations(recs);
+    }
+  }, [insights]);
 
-useEffect(() => {
-  if (data && targetColumn) {
-    const info = analyzeTarget(data, targetColumn);
-    setTargetInfo(info);
-  }
-}, [data, targetColumn]);
+  useEffect(() => {
+    if (data && targetColumn) {
+      const info = analyzeTarget(data, targetColumn);
+      setTargetInfo(info);
+    }
+  }, [data, targetColumn]);
 
-useEffect(() => {
-  if (targetInfo) {
-    const models = getModelRecommendations(targetInfo, data);
-    setModelRecs(models);
-  }
-}, [targetInfo, data]);
+  useEffect(() => {
+    if (targetInfo) {
+      const models = getModelRecommendations(targetInfo, data);
+      setModelRecs(models);
+    }
+  }, [targetInfo, data]);
 
-  // AI settings: read from session
   useEffect(() => {
     if (dataset_id) {
       const settings = storageUtils.getAiSettings();
@@ -152,7 +128,6 @@ useEffect(() => {
     }
   }, [dataset_id]);
 
-  // Shared AI hook for all 5 insight sub-sections
   const insightAi = useAiRecommendation({
     datasetId: dataset_id,
     page: "insights",
@@ -163,66 +138,49 @@ useEffect(() => {
   const aiInsightData = insightAi.aiResult?.data;
   const aiStatus = insightAi.aiStatus;
 
-  // Handle target column change
   const handleTargetChange = useCallback((column) => {
     updateSession({ target_column: column });
   }, [updateSession]);
 
-  // Loading states
-  if (edaAsync.isLoading) {
+  if (!edaData && !cachedEDA) {
     return <div className="p-6">Loading insights...</div>;
   }
 
-  if (edaAsync.isError) {
-    return <div className="p-6 text-red-600">Error loading insights: {edaAsync.error}</div>;
-  }
-
-  
-  
   if (!data) {
     return <div className="p-6">No data available</div>;
   }
 
-  // Extract feature importance data
-  const featureImportanceData = fiAsync.data?.data || fiAsync.data || [];
-
+  const featureImportanceData = fiAsync.data?.data || fiAsync.data?.importance || fiAsync.data || [];
   const explainInsights = interpretFeatureImportance(featureImportanceData);
 
   return (
     <div className="min-h-screen bg-gray-50">
       <div className="max-w-7xl mx-auto px-4 py-8 space-y-8">
-        {/* Header Section */}
         <div className="mb-8">
-          <h1 className="text-3xl font-bold text-gray-900 mb-2">📊 Data Insights Dashboard</h1>
+          <h1 className="text-3xl font-bold text-gray-900 mb-2">Data Insights Dashboard</h1>
           <p className="text-gray-600">Analyze dataset structure, quality, and model readiness</p>
         </div>
 
-        {/* Overview Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <OverviewCards overview={data.overview} />
         </div>
 
-        {/* Missing Values Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <MissingValuesChart data={data.missing} />
         </div>
 
-        {/* Numerical Analysis Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <NumericalAnalysis data={data.numerical} />
         </div>
 
-        {/* Categorical Analysis Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <CategoricalAnalysis data={data.categorical} />
         </div>
 
-        {/* Correlation Heatmap Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <CorrelationHeatmap data={data.correlation} />
         </div>
 
-        {/* Insights Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <InsightPanel
             insights={insights}
@@ -231,7 +189,6 @@ useEffect(() => {
           />
         </div>
 
-        {/* Recommendations Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <RecommendationPanel
             recommendations={recommendations}
@@ -240,7 +197,6 @@ useEffect(() => {
           />
         </div>
 
-        {/* Target Insights Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
           <TargetInsights
             targetInfo={targetInfo}
@@ -251,16 +207,15 @@ useEffect(() => {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm p-5">
-        <ModelRecommendations
-          models={modelRecs}
-          aiData={aiInsightData?.model_suggestions}
-          aiStatus={aiStatus}
-        />
+          <ModelRecommendations
+            models={modelRecs}
+            aiData={aiInsightData?.model_suggestions}
+            aiStatus={aiStatus}
+          />
         </div>
 
-        {/* Feature Importance Section */}
         <div className="bg-white rounded-xl shadow-sm p-5">
-          <h2 className="text-2xl font-bold text-gray-900 mb-6">⭐ Feature Importance</h2>
+          <h2 className="text-2xl font-bold text-gray-900 mb-6">Feature Importance</h2>
 
           <div className="flex gap-3 mb-6">
             <select

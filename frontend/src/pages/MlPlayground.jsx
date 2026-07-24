@@ -12,16 +12,15 @@ import { generateModelInsights } from "../utils/modelInsights";
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
 import { useSession } from "../contexts/SessionContext";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 
 function MlPlayground() {
   const { dataset_id } = useParams();
   const { notify } = useNotification();
   const { session, updateSession } = useSession();
+  const { state: wsState, updateSection } = useWorkspace();
   const sessionSynced = useRef(false);
 
-  // =============================
-  // Restore playground config from storage (survives navigation)
-  // =============================
   const storedPlayground = dataset_id ? storageUtils.getPlaygroundConfig(dataset_id) : {};
 
   const targetColumn = session?.target_column || "";
@@ -35,7 +34,9 @@ function MlPlayground() {
   const mlConfig = storageUtils.getMLConfig(dataset_id);
   const preprocessConfig = mlConfig?.preprocess_config || {};
 
-  // Sync session from backend on mount — restores problem type, algorithm, etc.
+  const trainingData = wsState?.training || {};
+  const cachedTraining = trainingData.experiments?.length > 0 ? trainingData : storageUtils.getTrainingHistory(dataset_id);
+
   useEffect(() => {
     if (!dataset_id || sessionSynced.current) return;
     sessionSynced.current = true;
@@ -48,15 +49,11 @@ function MlPlayground() {
     });
   }, [dataset_id]);
 
-  // Persist algorithm/params whenever they change
   useEffect(() => {
     if (!dataset_id) return;
     storageUtils.savePlaygroundConfig(dataset_id, { algorithm, params });
   }, [algorithm, params, dataset_id]);
 
-  // =============================
-  // Training API
-  // =============================
   const trainAsync = useAsync(async () => {
     if (!targetColumn) {
       throw new Error("Please select a target column");
@@ -74,9 +71,6 @@ function MlPlayground() {
     );
   });
 
-  // =============================
-  // Detect problem type from target column
-  // =============================
   useEffect(() => {
     if (!targetColumn) {
       setProblemType("");
@@ -93,7 +87,6 @@ function MlPlayground() {
 
     setProblemType(newProblemType);
 
-    // Only set default algorithm if none was previously stored
     if (!algorithm) {
       const defaultAlgo = isRegression ? "linear" : "rf";
       setAlgorithm(defaultAlgo);
@@ -108,9 +101,6 @@ function MlPlayground() {
 
   }, [targetColumn]);
 
-  // =============================
-  // Restore training result from session on mount
-  // =============================
   useEffect(() => {
     if (!dataset_id) return;
     const cachedResult = storageUtils.getPlaygroundResult(dataset_id);
@@ -120,18 +110,12 @@ function MlPlayground() {
     }
   }, [dataset_id]);
 
-  // =============================
-  // Handle cache-restored training results (skip save — saving is in handleTrain)
-  // =============================
   useEffect(() => {
     if (trainingFromCache.current) {
       trainingFromCache.current = false;
     }
   }, [trainAsync.isSuccess, trainAsync.data, dataset_id]);
 
-  // =============================
-  // Generate model insights
-  // =============================
   useEffect(() => {
     if (trainAsync.data?.data?.metrics && problemType) {
       const metrics = trainAsync.data.data.metrics;
@@ -140,9 +124,6 @@ function MlPlayground() {
     }
   }, [trainAsync.data, problemType]);
 
-  // =============================
-  // AI settings
-  // =============================
   useEffect(() => {
     if (dataset_id) {
       const settings = storageUtils.getAiSettings();
@@ -157,9 +138,6 @@ function MlPlayground() {
     enabled: aiEnabled
   });
 
-  // =============================
-  // Handlers
-  // =============================
   const handleTargetChange = useCallback(
     (column) => {
       updateSession({ target_column: column });
@@ -172,8 +150,8 @@ function MlPlayground() {
     notify.info("Training started", `${algorithm} training...`);
     try {
       const result = await trainAsync.execute();
-      if (!result || !dataset_id) return;
-      storageUtils.addTrainingExperiment(dataset_id, {
+
+      const experimentEntry = {
         response: result,
         algorithm,
         params,
@@ -181,7 +159,12 @@ function MlPlayground() {
         metrics: result?.data?.metrics || {},
         problem_type: problemType,
         target_column: targetColumn
-      });
+      };
+
+      if (!result || !dataset_id) return;
+      const experiments = storageUtils.addTrainingExperiment(dataset_id, experimentEntry);
+      const best = storageUtils.getBestModel(dataset_id);
+      updateSection("training", { experiments, best_model: best });
       storageUtils.addActivity(dataset_id, {
         type: "training",
         title: "Model trained",
@@ -194,15 +177,9 @@ function MlPlayground() {
     }
   }, [trainAsync, algorithm, dataset_id, params, preprocessConfig, problemType, targetColumn]);
 
-  // =============================
-  // Data prep
-  // =============================
   const columnTypes = storageUtils.getColumnTypes() || [];
   const columnNames = columnTypes.map((col) => col.column);
 
-  // =============================
-  // Validation
-  // =============================
   if (!dataset_id) {
     return (
       <div className="p-6 text-red-600">
@@ -211,14 +188,10 @@ function MlPlayground() {
     );
   }
 
-  // =============================
-  // UI
-  // =============================
   return (
     <div className="p-6 bg-gray-50 min-h-screen">
       <div className="max-w-7xl mx-auto grid grid-cols-2 gap-6">
 
-        {/* LEFT SIDE */}
         <div className="bg-white p-5 rounded-xl shadow-sm">
           <ModelControls
             columnNames={columnNames}
@@ -234,7 +207,6 @@ function MlPlayground() {
           />
         </div>
 
-        {/* RIGHT SIDE */}
         <div className="space-y-6">
 
           <div className="bg-white p-5 rounded-xl shadow-sm">

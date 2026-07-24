@@ -115,6 +115,10 @@ export const datasetsAPI = {
 export const workspaceAPI = {
   current: () => api.get("/workspace/current"),
   reset: () => api.post("/workspace/reset"),
+  state: () => api.get("/workspace/state"),
+  section: (section) => api.get(`/workspace/state/${section}`),
+  updateSection: (section, data, statusKey) =>
+    api.patch("/workspace/state", { section, data, status_key: statusKey }),
 };
 
 /**

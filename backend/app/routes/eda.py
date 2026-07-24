@@ -1,26 +1,16 @@
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel, Field
 from app.auth.dependencies import get_current_user
-from app.utils.dataset_helpers import (
-    load_dataset_df,
-    validate_target_column_in_dataset
-)
-from app.utils.eda_helpers import (
-    get_eda as get_cached_eda,
-    save_eda as save_cached_eda
-)
+from app.utils.dataset_helpers import load_dataset_df, validate_target_column_in_dataset
+from app.utils.eda_helpers import get_eda as get_cached_eda, save_eda as save_cached_eda
 from app.utils.feature_importance_helpers import (
     get_feature_importance as get_cached_fi,
-    save_feature_importance as save_cached_fi
+    save_feature_importance as save_cached_fi,
 )
-from app.utils.validators import (
-    validate_dataset_id,
-    validate_target_column,
-    validate_algorithm,
-    validate_params
-)
+from app.utils.validators import validate_dataset_id, validate_target_column, validate_algorithm, validate_params
 from app.utils.response import APIResponse
 from app.utils.workspace_helpers import verify_dataset_ownership
+from app.workspace.state_service import get_section, update_section
 from app.services.eda_service import (
     compute_overview,
     compute_missing_by_column,
@@ -30,7 +20,7 @@ from app.services.eda_service import (
     compute_correlation_matrix,
     clean_json,
     compute_feature_importance,
-    train_model
+    train_model,
 )
 from app.services.eda_service import compare_models
 
@@ -53,6 +43,7 @@ class TrainRequest(BaseModel):
     params: dict = Field(default_factory=dict, description="Model hyperparameters")
     preprocess_config: dict = Field(default_factory=dict, description="Preprocessing configuration")
 
+
 class CompareModelsRequest(BaseModel):
     dataset_id: str = Field(..., description="Dataset identifier")
     target_column: str = Field(..., description="Target column name")
@@ -63,12 +54,12 @@ class CompareModelsRequest(BaseModel):
 @router.post("/analyze", tags=["Exploratory Data Analysis"])
 def analyze_data(request: EDARequest, current_user: dict = Depends(get_current_user)):
     try:
-        verify_dataset_ownership(request.dataset_id, current_user["_id"])
+        workspace_id = verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
 
-        cached = get_cached_eda(request.dataset_id)
+        cached = get_section(workspace_id, "eda")
         if cached:
-            return APIResponse.success(cached["data"], from_cache=True)
+            return APIResponse.success(cached, from_cache=True)
 
         df = load_dataset_df(request.dataset_id)
 
@@ -78,11 +69,12 @@ def analyze_data(request: EDARequest, current_user: dict = Depends(get_current_u
             "numerical": compute_numerical_analysis(df),
             "categorical": compute_categorical_analysis(df),
             "column_types": get_column_types(df),
-            "correlation": compute_correlation_matrix(df)
+            "correlation": compute_correlation_matrix(df),
         }
 
         cleaned = clean_json(response)
         save_cached_eda(request.dataset_id, cleaned)
+        update_section(workspace_id, "eda", cleaned, update_status="eda_computed")
 
         return APIResponse.success(cleaned)
 
@@ -93,9 +85,13 @@ def analyze_data(request: EDARequest, current_user: dict = Depends(get_current_u
 @router.post("/feature-importance", tags=["Feature Analysis"])
 def feature_importance(request: FeatureImportanceRequest, current_user: dict = Depends(get_current_user)):
     try:
-        verify_dataset_ownership(request.dataset_id, current_user["_id"])
+        workspace_id = verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
+
+        ws_fi = get_section(workspace_id, "feature_importance")
+        if ws_fi:
+            return APIResponse.success(ws_fi.get("importance", ws_fi), from_cache=True)
 
         df = load_dataset_df(request.dataset_id)
         validate_target_column_in_dataset(df, request.target_column)
@@ -118,6 +114,8 @@ def feature_importance(request: FeatureImportanceRequest, current_user: dict = D
             APIResponse.validation_error(result["error"])
 
         save_cached_fi(request.dataset_id, request.target_column, problem_type, model_used, result["importance"])
+        fi_data = {"importance": result["importance"], "problem_type": problem_type, "model_used": model_used}
+        update_section(workspace_id, "feature_importance", fi_data, update_status="feature_importance_computed")
 
         return APIResponse.success(clean_json(result["importance"]))
 
@@ -128,7 +126,7 @@ def feature_importance(request: FeatureImportanceRequest, current_user: dict = D
 @router.post("/train-model", tags=["Model Training"])
 def train_model_api(request: TrainRequest, current_user: dict = Depends(get_current_user)):
     try:
-        verify_dataset_ownership(request.dataset_id, current_user["_id"])
+        workspace_id = verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
         validate_algorithm(request.algorithm)
@@ -142,7 +140,7 @@ def train_model_api(request: TrainRequest, current_user: dict = Depends(get_curr
             request.target_column,
             request.algorithm,
             request.params,
-            request.preprocess_config
+            request.preprocess_config,
         )
 
         if "error" in result:
@@ -157,7 +155,7 @@ def train_model_api(request: TrainRequest, current_user: dict = Depends(get_curr
 @router.post("/compare-models", tags=["Model Comparison"])
 def compare_models_api(request: CompareModelsRequest, current_user: dict = Depends(get_current_user)):
     try:
-        verify_dataset_ownership(request.dataset_id, current_user["_id"])
+        workspace_id = verify_dataset_ownership(request.dataset_id, current_user["_id"])
         validate_dataset_id(request.dataset_id)
         validate_target_column(request.target_column)
 
@@ -168,13 +166,10 @@ def compare_models_api(request: CompareModelsRequest, current_user: dict = Depen
             df,
             request.target_column,
             request.problem_type,
-            request.preprocess_config
+            request.preprocess_config,
         )
 
         return APIResponse.success(clean_json(result))
 
     except Exception as e:
-        APIResponse.server_error(
-            f"Model comparison failed: {str(e)}",
-            exception=e
-        )
+        APIResponse.server_error(f"Model comparison failed: {str(e)}", exception=e)

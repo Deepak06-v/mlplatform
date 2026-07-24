@@ -102,7 +102,11 @@ def _detailed_storage_stats():
         "_id": 0, "dataset_id": 1, "file_size_mb": 1,
         "created_at": 1, "usage_count": 1, "filename": 1,
     }))
-    oldest = min(datasets, key=lambda d: d.get("created_at", 0)) if datasets else None
+    oldest = min(
+        [d for d in datasets if d.get("created_at") is not None],
+        key=lambda d: d["created_at"],
+        default=None,
+    ) if datasets else None
     most_used = max(datasets, key=lambda d: d.get("usage_count", 0)) if datasets else None
 
     return {

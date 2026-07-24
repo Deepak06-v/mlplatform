@@ -6,10 +6,12 @@ import ModelComparisonDashboard from "../components/ModelComparison/ModelCompari
 import { useAiRecommendation } from "../hooks/useAiRecommendation";
 import { useNotification } from "../contexts/NotificationContext";
 import { useSession } from "../contexts/SessionContext";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 
 function ModelComparison() {
   const { dataset_id } = useParams();
   const { session: globalSession } = useSession();
+  const { state: wsState, updateSection } = useWorkspace();
   const sessionSynced = useRef(false);
 
   const mlConfig = storageUtils.getMLConfig(dataset_id);
@@ -20,7 +22,9 @@ function ModelComparison() {
   const [aiEnabled, setAiEnabled] = useState(false);
   const { notify } = useNotification();
 
-  // Sync session from backend on mount to restore config
+  const trainingData = wsState?.training || {};
+  const cachedComparison = trainingData.comparison;
+
   useEffect(() => {
     if (!dataset_id || sessionSynced.current) return;
     sessionSynced.current = true;
@@ -41,14 +45,16 @@ function ModelComparison() {
         updatedConfig.preprocess_config
       );
 
-      setData(response.data);
-      storageUtils.saveComparisonResult(dataset_id, response.data);
+      const resultData = response.data;
+      setData(resultData);
+      storageUtils.saveComparisonResult(dataset_id, resultData);
+      updateSection("training", { ...trainingData, comparison: resultData });
       storageUtils.addActivity(dataset_id, {
         type: "comparison",
         title: "Model comparison completed",
-        description: `${response.data?.leaderboard?.length || 0} models compared`
+        description: `${resultData?.leaderboard?.length || 0} models compared`
       });
-      notify.success("Comparison complete", `${response.data?.leaderboard?.length || 0} models evaluated`);
+      notify.success("Comparison complete", `${resultData?.leaderboard?.length || 0} models evaluated`);
     } catch (err) {
       console.error("Comparison failed:", err);
       setError(err.message || "Failed to compare models");
@@ -64,6 +70,11 @@ function ModelComparison() {
     const settings = storageUtils.getAiSettings();
     setAiEnabled(settings.mode === "ai");
 
+    if (cachedComparison?.result) {
+      setData(cachedComparison.result);
+      return;
+    }
+
     const cached = storageUtils.getComparisonResult(dataset_id);
     if (cached?.result) {
       setData(cached.result);
@@ -71,7 +82,7 @@ function ModelComparison() {
     }
 
     fetchComparison();
-  }, [dataset_id]);
+  }, [dataset_id, cachedComparison?.result]);
 
   const comparisonAi = useAiRecommendation({
     datasetId: dataset_id,

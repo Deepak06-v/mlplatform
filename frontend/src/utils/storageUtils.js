@@ -259,6 +259,7 @@ export const storageUtils = {
     this._experimentsCache[datasetId].push(experiment);
     this.savePlaygroundResult(datasetId, response);
     experimentAPI.create(experiment).catch(() => {});
+    return this._experimentsCache[datasetId];
   },
 
   getTrainingHistory(datasetId) {

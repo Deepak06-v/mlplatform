@@ -1,5 +1,5 @@
 export function interpretFeatureImportance(data) {
-  if (!data || data.length === 0) return []
+  if (!data || !Array.isArray(data) || data.length === 0) return []
 
   const top = data[0]
 

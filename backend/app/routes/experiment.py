@@ -6,10 +6,13 @@ from app.utils.validators import validate_dataset_id
 from app.utils.response import APIResponse
 from app.utils.workspace_helpers import verify_dataset_ownership
 from app.utils.experiment_helpers import (
-    create_experiment, get_experiments, count_experiments,
-    get_best_experiment, delete_experiments
+    create_experiment,
+    get_experiments,
+    count_experiments,
+    get_best_experiment,
+    delete_experiments,
 )
-from app.utils.db import experiments_collection
+from app.workspace.state_service import get_section, update_section
 
 router = APIRouter()
 
@@ -32,6 +35,27 @@ def create_experiment_endpoint(data: ExperimentData, current_user: dict = Depend
     validate_dataset_id(data.dataset_id)
     workspace_id = verify_dataset_ownership(data.dataset_id, current_user["_id"])
     doc = create_experiment(data.model_dump())
+
+    training = get_section(workspace_id, "training") or {}
+    experiments = training.get("experiments") or []
+    experiments.append(data.model_dump())
+    training["experiments"] = experiments
+
+    best = get_best_experiment(data.dataset_id)
+    if best:
+        training["best_model"] = best
+    training["leaderboard"] = sorted(
+        experiments,
+        key=lambda e: (
+            e.get("metrics", {}).get("accuracy", 0)
+            or e.get("metrics", {}).get("f1", 0)
+            or e.get("metrics", {}).get("r2", 0)
+        ),
+        reverse=True,
+    )
+
+    update_section(workspace_id, "training", training, update_status="models_trained")
+
     return APIResponse.success(doc, "Experiment created")
 
 

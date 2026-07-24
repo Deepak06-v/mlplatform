@@ -122,7 +122,7 @@ class AppwriteStorageProvider(StorageProvider):
     def list_objects(self) -> list[dict]:
         results = []
         try:
-            response = self.storage.list_files(bucket_id=self.bucket_id, limit=100)
+            response = self.storage.list_files(bucket_id=self.bucket_id, queries=["limit(100)"])
             dump = response.model_dump(by_alias=True)
             files = dump.get("files", [])
             for f in files:

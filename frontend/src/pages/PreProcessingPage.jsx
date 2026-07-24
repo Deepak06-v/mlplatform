@@ -3,12 +3,14 @@ import { useNavigate, useParams } from "react-router-dom";
 import { storageUtils } from "../utils/storageUtils";
 import { useNotification } from "../contexts/NotificationContext";
 import { useSession } from "../contexts/SessionContext";
+import { useWorkspace } from "../contexts/WorkspaceContext";
 
 function PreprocessingPage() {
   const { dataset_id } = useParams();
   const navigate = useNavigate();
   const { notify } = useNotification();
   const { session: globalSession } = useSession();
+  const { state: wsState, updateSection } = useWorkspace();
   const sessionSynced = useRef(false);
 
   const [problemType, setProblemType] = useState("");
@@ -25,11 +27,14 @@ function PreprocessingPage() {
   };
 
   const [config, setConfig] = useState(() => {
+    const wsConfig = wsState?.preprocessing;
+    if (wsConfig && Object.keys(wsConfig).length > 0) {
+      return { ...PREPROCESS_DEFAULTS, ...wsConfig };
+    }
     const stored = dataset_id ? storageUtils.getPreprocessConfig(dataset_id) : {};
     return { ...PREPROCESS_DEFAULTS, ...stored };
   });
 
-  // Sync session from backend on mount, then re-read
   useEffect(() => {
     if (!dataset_id || sessionSynced.current) return;
     sessionSynced.current = true;
@@ -40,13 +45,16 @@ function PreprocessingPage() {
     });
   }, [dataset_id]);
 
-  // Re-read from storage when dataset_id changes
   useEffect(() => {
-    const stored = storageUtils.getPreprocessConfig(dataset_id);
-    setConfig({ ...PREPROCESS_DEFAULTS, ...stored });
-  }, [dataset_id]);
+    const wsConfig = wsState?.preprocessing;
+    if (wsConfig && Object.keys(wsConfig).length > 0) {
+      setConfig({ ...PREPROCESS_DEFAULTS, ...wsConfig });
+    } else {
+      const stored = storageUtils.getPreprocessConfig(dataset_id);
+      setConfig({ ...PREPROCESS_DEFAULTS, ...stored });
+    }
+  }, [dataset_id, wsState?.preprocessing]);
 
-  // Detect problem type from target column
   useEffect(() => {
     if (!targetColumn) {
       setProblemType("");
@@ -74,12 +82,14 @@ function PreprocessingPage() {
     setConfig((prev) => {
       const next = { ...prev, [key]: value };
       storageUtils.savePreprocessConfig(dataset_id, next);
+      updateSection("preprocessing", next);
       return next;
     });
   };
 
   const handleContinue = () => {
     storageUtils.savePreprocessConfig(dataset_id, config);
+    updateSection("preprocessing", config);
     storageUtils.addActivity(dataset_id, {
       type: "preprocess",
       title: "Preprocessing saved",
