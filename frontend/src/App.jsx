@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from "react-router-dom";
 import { useEffect } from "react";
 import { Analytics } from "@vercel/analytics/react";
+import { SpeedInsights } from "@vercel/speed-insights/react";
 
 import LoginPage from "./pages/LoginPage";
 import SignupPage from "./pages/SignupPage";
@@ -87,6 +88,7 @@ const App = () => {
       </Routes>
       <ToastContainer />
       <Analytics />
+      <SpeedInsights />
     </>
   );
 };
